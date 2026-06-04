@@ -17,9 +17,12 @@ app.add_middleware(
 )
 
 
+from app.api import auth, users
+
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(users.router, prefix="/api/v1")
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "1.0.0"}
-
-
-# Routers will be added here in subsequent phases
