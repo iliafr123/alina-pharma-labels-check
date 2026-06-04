@@ -1,8 +1,158 @@
-# Celery tasks — populated in Phase 3
+import asyncio
+import uuid
+from datetime import datetime, timezone
+from celery.utils.log import get_task_logger
 from app.workers.celery_app import celery_app
 
+logger = get_task_logger(__name__)
 
-@celery_app.task(bind=True, name="run_check_pipeline")
+
+@celery_app.task(bind=True, name="run_check_pipeline", max_retries=3, default_retry_delay=10)
 def run_check_pipeline(self, task_id: str):
-    """Main pipeline task — implemented in Phase 3."""
-    pass
+    asyncio.run(_run_pipeline(task_id))
+
+
+async def _run_pipeline(task_id: str):
+    from sqlalchemy import select, update
+    from app.core.database import AsyncSessionLocal
+    from app.models.checks import CheckTask, CheckResult, TaskStatus, CheckStage
+    from app.models.files import Mockup, PenDocument
+    from app.models.references import DictionaryEntry, BrandWhitelist, ChecklistRule
+    from app.models.config import SystemConfig
+    from app.models.products import Product
+    from app.services.storage import storage_service
+    from app.pipeline.providers.pdf_extractor import extract_text_layer
+    from app.pipeline.providers import get_ocr_provider, get_llm_provider
+    from app.pipeline.pen_parser import parse_pen_document
+    from app.pipeline.stages.spelling_check import run_spelling_check
+    from app.pipeline.stages.pen_comparison import run_pen_comparison
+    from app.pipeline.stages.regulatory_check import run_regulatory_check
+    from app.pipeline.report_generator import generate_annotated_pdf
+    from cryptography.fernet import Fernet
+    from app.core.config import settings
+
+    fernet = Fernet(settings.ENCRYPTION_KEY.encode() if len(settings.ENCRYPTION_KEY) < 50 else settings.ENCRYPTION_KEY.encode())
+
+    async with AsyncSessionLocal() as db:
+        # Load task
+        result = await db.execute(select(CheckTask).where(CheckTask.id == uuid.UUID(task_id)))
+        task = result.scalar_one_or_none()
+        if not task:
+            logger.error(f"Task {task_id} not found")
+            return
+
+        await db.execute(update(CheckTask).where(CheckTask.id == task.id).values(
+            status=TaskStatus.RUNNING, started_at=datetime.now(timezone.utc)
+        ))
+        await db.commit()
+
+        try:
+            # Load files
+            mockup_res = await db.execute(select(Mockup).where(Mockup.id == task.mockup_id))
+            mockup = mockup_res.scalar_one()
+            pen_res = await db.execute(select(PenDocument).where(PenDocument.id == task.pen_id))
+            pen = pen_res.scalar_one()
+
+            mockup_bytes = storage_service.download_file(mockup.s3_key)
+            pen_bytes = storage_service.download_file(pen.s3_key)
+
+            # Load product category
+            product_res = await db.execute(select(Product).where(Product.id == mockup.product_id))
+            product = product_res.scalar_one()
+            category = product.category.value
+
+            # Load config
+            config_res = await db.execute(select(SystemConfig))
+            config_rows = {r.key: r for r in config_res.scalars().all()}
+
+            def get_key(config_key: str) -> str:
+                row = config_rows.get(config_key)
+                if not row or not row.value:
+                    return ""
+                if row.is_encrypted:
+                    try:
+                        return fernet.decrypt(row.value.encode()).decode()
+                    except Exception:
+                        return row.value
+                return row.value
+
+            mode = task.mode.value
+            pipeline_cfg = task.pipeline_config or {}
+
+            if mode == "unified":
+                llm_name = pipeline_cfg.get("unified_llm", "anthropic")
+                llm_key = get_key(f"api_key_{llm_name}")
+                ocr_provider = get_ocr_provider(llm_name, llm_key)
+                llm_provider = get_llm_provider(llm_name, llm_key)
+            else:
+                ocr_name = pipeline_cfg.get("ocr_provider", "anthropic_vision")
+                ocr_key = get_key(f"api_key_{ocr_name.replace('_vision','')}")
+                llm_name = pipeline_cfg.get("llm_provider", "anthropic")
+                llm_key = get_key(f"api_key_{llm_name}")
+                ocr_provider = get_ocr_provider(ocr_name, ocr_key)
+                llm_provider = get_llm_provider(llm_name, llm_key)
+
+            # Stage 1: OCR
+            ocr_result = None
+            if mockup.file_type.value == "pdf":
+                ocr_result = await extract_text_layer(mockup_bytes)
+            if ocr_result is None:
+                ocr_result = await ocr_provider.extract_text(mockup_bytes)
+
+            ocr_cr = CheckResult(
+                id=uuid.uuid4(), task_id=task.id, stage=CheckStage.ocr,
+                issues=[{"full_text": ocr_result.full_text[:500]}],
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(ocr_cr)
+
+            # Load references
+            dict_res = await db.execute(select(DictionaryEntry))
+            dictionary_terms = [r.term for r in dict_res.scalars().all()]
+            brand_res = await db.execute(select(BrandWhitelist))
+            brand_whitelist = [r.brand_name for r in brand_res.scalars().all()]
+            rule_res = await db.execute(select(ChecklistRule).where(ChecklistRule.is_active == True))
+            rules = [{"rule_key": r.rule_key, "description": r.description, "category": r.category.value} for r in rule_res.scalars().all()]
+
+            # Parse PEN
+            pen_fields = pen.parsed_fields or parse_pen_document(pen_bytes)
+
+            all_issues: list[dict] = []
+
+            # Stage 2: Spelling
+            spelling_issues = await run_spelling_check(ocr_result.full_text, dictionary_terms, brand_whitelist, llm_provider)
+            db.add(CheckResult(id=uuid.uuid4(), task_id=task.id, stage=CheckStage.spelling, issues=spelling_issues, created_at=datetime.now(timezone.utc)))
+            all_issues.extend(spelling_issues)
+
+            # Stage 3: PEN comparison
+            pen_issues = await run_pen_comparison(ocr_result.full_text, pen_fields, llm_provider, category)
+            db.add(CheckResult(id=uuid.uuid4(), task_id=task.id, stage=CheckStage.pen, issues=pen_issues, created_at=datetime.now(timezone.utc)))
+            all_issues.extend(pen_issues)
+
+            # Stage 4: Regulatory
+            reg_issues = await run_regulatory_check(ocr_result.full_text, mockup_bytes, category, rules, llm_provider)
+            db.add(CheckResult(id=uuid.uuid4(), task_id=task.id, stage=CheckStage.regulatory, issues=reg_issues, created_at=datetime.now(timezone.utc)))
+            all_issues.extend(reg_issues)
+
+            # Stage 5: Annotated PDF
+            annotated_pdf_key = None
+            if mockup.file_type.value == "pdf":
+                annotated_bytes = generate_annotated_pdf(mockup_bytes, all_issues)
+                annotated_pdf_key = f"reports/{task.id}/annotated.pdf"
+                storage_service.upload_file(annotated_bytes, annotated_pdf_key, "application/pdf")
+
+            db.add(CheckResult(id=uuid.uuid4(), task_id=task.id, stage=CheckStage.report, issues=[], annotated_pdf_s3_key=annotated_pdf_key, created_at=datetime.now(timezone.utc)))
+
+            await db.execute(update(CheckTask).where(CheckTask.id == task.id).values(
+                status=TaskStatus.COMPLETED, completed_at=datetime.now(timezone.utc)
+            ))
+            await db.commit()
+            logger.info(f"Task {task_id} completed with {len(all_issues)} issues")
+
+        except Exception as exc:
+            logger.error(f"Task {task_id} failed: {exc}", exc_info=True)
+            await db.execute(update(CheckTask).where(CheckTask.id == task.id).values(
+                status=TaskStatus.FAILED, completed_at=datetime.now(timezone.utc), error=str(exc)
+            ))
+            await db.commit()
+            raise

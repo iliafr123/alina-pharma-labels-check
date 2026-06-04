@@ -17,10 +17,14 @@ app.add_middleware(
 )
 
 
-from app.api import auth, users
+from app.api import auth, users, uploads, checks, admin, references
 
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
+app.include_router(uploads.router, prefix="/api/v1")
+app.include_router(checks.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
+app.include_router(references.router, prefix="/api/v1")
 
 
 @app.get("/health")
