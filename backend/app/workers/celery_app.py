@@ -8,6 +8,8 @@ celery_app = Celery(
     include=["app.workers.tasks"],
 )
 
+import os
+
 celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
@@ -17,4 +19,7 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    # Dev mode: run tasks synchronously in-process when no Redis broker is available
+    task_always_eager=os.getenv("CELERY_EAGER", "false").lower() == "true",
+    task_eager_propagates=True,
 )
