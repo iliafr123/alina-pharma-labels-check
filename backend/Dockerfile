@@ -15,4 +15,4 @@ COPY . .
 
 EXPOSE 8000
 # On boot: create tables + seed (idempotent), then start the API on Railway's $PORT (fallback 8000).
-CMD ["sh", "-c", "python -m scripts.dev_init && uvicorn app.main:app --host :: --port ${PORT:-8000}"]
+CMD ["sh", "-c", "python -m scripts.dev_init && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
