@@ -33,7 +33,10 @@ class ABBYYProvider(BaseOCRProvider):
                     urls = st.get("resultUrls") or []
                     if not urls:
                         return OCRResult(full_text="")
-                    txt = await client.get(urls[0])
+                    # resultUrls point to cloud storage (Azure) with their own access token —
+                    # must download WITHOUT the ABBYY Basic-auth header, or storage returns 403.
+                    async with httpx.AsyncClient(timeout=60) as dl:
+                        txt = await dl.get(urls[0])
                     txt.raise_for_status()
                     text = txt.text
                     return OCRResult(blocks=[TextBlock(text=text, bbox={"x": 0, "y": 0, "w": 0, "h": 0, "page": 0})], full_text=text)
