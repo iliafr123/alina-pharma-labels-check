@@ -12,7 +12,7 @@ from app.models.checks import CheckTask, CheckResult, TaskStatus
 from app.models.files import Mockup, PenDocument
 from app.models.products import Product
 from app.models.audit_log import AuditLog
-from app.services.storage import storage_service
+from app.services.storage import storage_service, get_storage_service
 from app.services.export_service import generate_excel_report, generate_word_report
 from app.schemas.checks import CheckCreate, CheckTaskResponse
 import io
@@ -108,7 +108,8 @@ async def get_report_pdf(
     report = result.scalar_one_or_none()
     if not report or not report.annotated_pdf_s3_key:
         raise HTTPException(404, "Аннотированный PDF не найден")
-    url = storage_service.generate_presigned_url(report.annotated_pdf_s3_key)
+    storage = await get_storage_service(db)
+    url = storage.generate_presigned_url(report.annotated_pdf_s3_key)
     return {"url": url}
 
 

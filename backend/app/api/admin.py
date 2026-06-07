@@ -8,7 +8,7 @@ from app.models.audit_log import AuditLog
 from app.models.checks import CheckTask, TaskStatus
 from app.services import config_service
 from app.pipeline.providers import get_ocr_provider, get_llm_provider
-from app.services.storage import StorageService
+from app.services.storage import StorageService, get_storage_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -56,7 +56,7 @@ async def test_connection(
     api_key = await config_service.get_config(db, f"api_key_{provider_name}") or ""
     try:
         if provider_type == "storage":
-            svc = StorageService()
+            svc = await get_storage_service(db)
             ok = svc.test_connection()
         elif provider_type == "ocr":
             provider = get_ocr_provider(provider_name, api_key)

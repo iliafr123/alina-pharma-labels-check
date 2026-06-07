@@ -20,7 +20,7 @@ async def _run_pipeline(task_id: str):
     from app.models.references import DictionaryEntry, BrandWhitelist, ChecklistRule
     from app.models.config import SystemConfig
     from app.models.products import Product
-    from app.services.storage import storage_service
+    from app.services.storage import get_storage_service
     from app.pipeline.providers.pdf_extractor import extract_text_layer
     from app.pipeline.providers import get_ocr_provider, get_llm_provider
     from app.pipeline.pen_parser import parse_pen_document
@@ -53,8 +53,9 @@ async def _run_pipeline(task_id: str):
             pen_res = await db.execute(select(PenDocument).where(PenDocument.id == task.pen_id))
             pen = pen_res.scalar_one()
 
-            mockup_bytes = storage_service.download_file(mockup.s3_key)
-            pen_bytes = storage_service.download_file(pen.s3_key)
+            storage = await get_storage_service(db)
+            mockup_bytes = storage.download_file(mockup.s3_key)
+            pen_bytes = storage.download_file(pen.s3_key)
 
             # Load product category
             product_res = await db.execute(select(Product).where(Product.id == mockup.product_id))
@@ -139,7 +140,7 @@ async def _run_pipeline(task_id: str):
             if mockup.file_type.value == "pdf":
                 annotated_bytes = generate_annotated_pdf(mockup_bytes, all_issues)
                 annotated_pdf_key = f"reports/{task.id}/annotated.pdf"
-                storage_service.upload_file(annotated_bytes, annotated_pdf_key, "application/pdf")
+                storage.upload_file(annotated_bytes, annotated_pdf_key, "application/pdf")
 
             db.add(CheckResult(id=uuid.uuid4(), task_id=task.id, stage=CheckStage.report, issues=[], annotated_pdf_s3_key=annotated_pdf_key, created_at=datetime.now(timezone.utc)))
 

@@ -7,7 +7,7 @@ from sqlalchemy import select, func
 from app.models.files import Mockup, PenDocument, FileType
 from app.models.products import Product, ProductCategory
 from app.models.audit_log import AuditLog
-from app.services.storage import storage_service
+from app.services.storage import storage_service, get_storage_service
 
 ALLOWED_MOCKUP_TYPES = {"application/pdf", "image/jpeg", "image/jpg"}
 ALLOWED_PEN_TYPES = {
@@ -44,9 +44,10 @@ async def upload_mockup(
         raise HTTPException(400, "Файл макета превышает максимальный размер 100 МБ")
     file_type = _detect_file_type(file.filename or "", file.content_type or "")
     version = await _next_version(db, Mockup, product_id)
-    s3_key = storage_service.generate_s3_key(str(product_id), "mockups", file.filename or "mockup")
+    storage = await get_storage_service(db)
+    s3_key = storage.generate_s3_key(str(product_id), "mockups", file.filename or "mockup")
     content_type = "application/pdf" if file_type == FileType.pdf else "image/jpeg"
-    storage_service.upload_file(content, s3_key, content_type)
+    storage.upload_file(content, s3_key, content_type)
     mockup = Mockup(
         product_id=product_id, version=version, file_type=file_type,
         s3_key=s3_key, original_name=file.filename or "mockup",
@@ -69,8 +70,9 @@ async def upload_pen(
     if len(content) > MAX_PEN_SIZE:
         raise HTTPException(400, "Файл ПЭН превышает максимальный размер 20 МБ")
     version = await _next_version(db, PenDocument, product_id)
-    s3_key = storage_service.generate_s3_key(str(product_id), "pen", file.filename or "pen.docx")
-    storage_service.upload_file(content, s3_key, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    storage = await get_storage_service(db)
+    s3_key = storage.generate_s3_key(str(product_id), "pen", file.filename or "pen.docx")
+    storage.upload_file(content, s3_key, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     pen = PenDocument(
         product_id=product_id, version=version, s3_key=s3_key,
         original_name=file.filename or "pen.docx", uploaded_by=uploaded_by_id,
@@ -105,6 +107,7 @@ async def confirm_zip_upload(
     category: ProductCategory,
 ) -> list[dict]:
     results = []
+    storage = await get_storage_service(db)
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         for item in mapping:
             product_name = item.get("product_name") or item["name"]
@@ -121,9 +124,9 @@ async def confirm_zip_upload(
                 fname = item["mockup"].rsplit("/", 1)[-1]
                 ft = _detect_file_type(fname, "")
                 ver = await _next_version(db, Mockup, product.id)
-                key = storage_service.generate_s3_key(str(product.id), "mockups", fname)
+                key = storage.generate_s3_key(str(product.id), "mockups", fname)
                 ct = "application/pdf" if ft == FileType.pdf else "image/jpeg"
-                storage_service.upload_file(data, key, ct)
+                storage.upload_file(data, key, ct)
                 db.add(Mockup(product_id=product.id, version=ver, file_type=ft, s3_key=key, original_name=fname, uploaded_by=uploaded_by_id))
                 uploads["mockup"] = fname
 
@@ -131,8 +134,8 @@ async def confirm_zip_upload(
                 data = zf.read(item["pen"])
                 fname = item["pen"].rsplit("/", 1)[-1]
                 ver = await _next_version(db, PenDocument, product.id)
-                key = storage_service.generate_s3_key(str(product.id), "pen", fname)
-                storage_service.upload_file(data, key, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                key = storage.generate_s3_key(str(product.id), "pen", fname)
+                storage.upload_file(data, key, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
                 db.add(PenDocument(product_id=product.id, version=ver, s3_key=key, original_name=fname, uploaded_by=uploaded_by_id))
                 uploads["pen"] = fname
 
