@@ -19,6 +19,10 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    # A hung provider call must not freeze the single worker and stall the queue.
+    # Soft limit raises a catchable exception (task marked FAILED); hard limit kills as backstop.
+    task_soft_time_limit=240,
+    task_time_limit=300,
     # Dev mode: run tasks synchronously in-process when no Redis broker is available
     task_always_eager=os.getenv("CELERY_EAGER", "false").lower() == "true",
     task_eager_propagates=True,
