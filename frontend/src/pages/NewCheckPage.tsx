@@ -46,16 +46,8 @@ export default function NewCheckPage() {
     }
   }
 
-  const DropZone = ({ props, inputProps, active, file, label }: any) => (
-    <div {...props} className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition ${active ? 'border-[#2E75B6] bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-600 hover:border-[#2E75B6]'}`}>
-      <input {...inputProps} />
-      {file ? (
-        <p className="text-sm text-green-600 dark:text-green-400 font-medium">✓ {file.name}</p>
-      ) : (
-        <p className="text-sm text-gray-500 dark:text-gray-400">{active ? 'Отпустите файл...' : label}</p>
-      )}
-    </div>
-  )
+  const zoneClass = (active: boolean) =>
+    `border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition ${active ? 'border-[#2E75B6] bg-blue-50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-600 hover:border-[#2E75B6]'}`
 
   return (
     <div className="max-w-2xl">
@@ -84,11 +76,25 @@ export default function NewCheckPage() {
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Макет (PDF или JPG)</label>
-          <DropZone props={getMockupProps()} inputProps={getMockupInput()} active={isDragMockup} file={mockupFile} label="Перетащите PDF или JPG, или нажмите для выбора" />
+          <div {...getMockupProps()} className={zoneClass(isDragMockup)}>
+            <input {...getMockupInput()} />
+            {mockupFile ? (
+              <p className="text-sm text-green-600 dark:text-green-400 font-medium">✓ {mockupFile.name}</p>
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-400">{isDragMockup ? 'Отпустите файл...' : 'Перетащите PDF или JPG, или нажмите для выбора'}</p>
+            )}
+          </div>
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Эталон ПЭН (DOCX)</label>
-          <DropZone props={getPenProps()} inputProps={getPenInput()} active={isDragPen} file={penFile} label="Перетащите DOCX файл ПЭН, или нажмите для выбора" />
+          <div {...getPenProps()} className={zoneClass(isDragPen)}>
+            <input {...getPenInput()} />
+            {penFile ? (
+              <p className="text-sm text-green-600 dark:text-green-400 font-medium">✓ {penFile.name}</p>
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-400">{isDragPen ? 'Отпустите файл...' : 'Перетащите DOCX файл ПЭН, или нажмите для выбора'}</p>
+            )}
+          </div>
         </div>
         {error && <p className="text-red-500 text-sm">{error}</p>}
         <button type="submit" disabled={loading || !mockupFile || !penFile || !productName} className="w-full bg-[#1F4E79] hover:bg-[#2E75B6] text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-40 text-sm">
