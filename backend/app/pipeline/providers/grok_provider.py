@@ -5,12 +5,21 @@ import httpx
 from app.pipeline.base import BaseOCRProvider, OCRResult, TextBlock
 from app.pipeline.providers.openai_provider import OpenAILLMProvider
 
-# Vision-capable Grok models, preferred order (multimodal grok-4 or dedicated vision model).
-_VISION_PREFERRED = ("grok-2-vision-1212", "grok-2-vision", "grok-4", "grok-4-latest", "grok-4-fast")
+# Non-chat / generative model ids to exclude when auto-selecting a chat (or vision) model.
+_BAD = ("imagine", "image", "video", "build", "embed", "tts", "whisper", "code", "audio")
 
-# Preference order when the configured model is unavailable — resolved against the
-# account's actual /models list so we never hardcode a model that may be retired.
-_PREFERRED = ("grok-4", "grok-4-latest", "grok-3", "grok-3-latest", "grok-2-1212", "grok-beta")
+
+def _chat_models(ids: list) -> list:
+    return [i for i in ids if i and i.startswith("grok") and not any(b in i for b in _BAD)]
+
+
+def _best_chat(ids: list):
+    """Pick the strongest available Grok chat model (grok-4.x family is multimodal)."""
+    c = _chat_models(ids)
+    if not c:
+        return None
+    return ("grok-4.3" if "grok-4.3" in c
+            else next((i for i in c if i.startswith("grok-4")), None) or c[0])
 
 
 class GrokLLMProvider(OpenAILLMProvider):
@@ -29,9 +38,7 @@ class GrokLLMProvider(OpenAILLMProvider):
         try:
             r = await client.get(f"{self._base_url}/models", headers={"Authorization": f"Bearer {self._api_key}"})
             ids = [m.get("id") for m in (r.json().get("data") or [])]
-            chat = [i for i in ids if i and i.startswith("grok") and "vision" not in i and "image" not in i]
-            picked = next((p for p in _PREFERRED if p in ids), None) or (chat[0] if chat else self._model)
-            self._model = picked
+            self._model = _best_chat(ids) or self._model
         except Exception:
             pass
         self._model_resolved = True
@@ -71,10 +78,8 @@ class GrokVisionProvider(BaseOCRProvider):
             r = await client.get(f"{self._BASE}/models", headers={"Authorization": f"Bearer {self._api_key}"})
             ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
             self._ids = ids
-            vis = [i for i in ids if "vision" in i or "image" in i]
-            g4 = [i for i in ids if i.startswith("grok-4")]  # grok-4 family is multimodal
-            self._model = (next((p for p in _VISION_PREFERRED if p in ids), None)
-                           or (vis[0] if vis else None) or (g4[0] if g4 else None) or self._model)
+            # grok-4.x chat models are multimodal (accept image_url); generative grok-imagine-* are excluded.
+            self._model = _best_chat(ids) or self._model
         except Exception:
             pass
         self._resolved = True
