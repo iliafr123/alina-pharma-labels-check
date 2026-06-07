@@ -29,7 +29,8 @@ class YandexVisionProvider(BaseOCRProvider):
         }
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(self._API_URL, json=payload, headers=headers)
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Yandex OCR {resp.status_code}: {resp.text[:400]}")
             data = resp.json()
         # recognizeText returns {"result": {"textAnnotation": {"fullText": "...", "blocks": [...]}}}
         ann = (data.get("result") or {}).get("textAnnotation") or {}
@@ -47,7 +48,7 @@ class YandexVisionProvider(BaseOCRProvider):
         try:
             await self.extract_text(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9")
             return True
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code in (401, 403):
+        except RuntimeError as e:
+            if " 401:" in str(e) or " 403:" in str(e):
                 raise
             return True
