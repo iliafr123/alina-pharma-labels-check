@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
+from datetime import datetime, timezone
 from app.core.database import get_db
 from app.core.deps import require_admin
 from app.models.users import User
@@ -73,6 +74,22 @@ async def test_connection(
         return {"success": ok, "message": "Подключение успешно" if ok else "Ошибка подключения"}
     except Exception as e:
         return {"success": False, "message": str(e)}
+
+
+@router.post("/purge-queue")
+async def purge_queue(db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
+    """Clear the broker queue and mark stale PENDING checks as FAILED (drains zombie backlog)."""
+    from app.workers.celery_app import celery_app
+    purged = None
+    try:
+        with celery_app.connection_for_write() as conn:
+            purged = conn.default_channel.queue_purge("celery")
+    except Exception as e:
+        purged = f"err: {e}"
+    res = await db.execute(update(CheckTask).where(CheckTask.status == TaskStatus.PENDING).values(
+        status=TaskStatus.FAILED, error="stale/purged", completed_at=datetime.now(timezone.utc)))
+    await db.commit()
+    return {"purged_messages": purged, "pending_marked_failed": res.rowcount}
 
 
 @router.get("/logs")
