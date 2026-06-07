@@ -48,8 +48,14 @@ export default function AdminPage() {
 
   const testConn = async (type: string, name: string) => {
     setTestResult((prev) => ({ ...prev, [name]: '...' }))
-    const { data } = await api.post('/admin/config/test-connection', { provider_type: type, provider_name: name })
-    setTestResult((prev) => ({ ...prev, [name]: data.success ? '✓ OK' : `✗ ${data.message}` }))
+    try {
+      // Persist current keys/config first — the server-side test reads the SAVED key from the DB.
+      await api.put('/admin/config', { api_keys: apiKeys, pipeline, s3 })
+      const { data } = await api.post('/admin/config/test-connection', { provider_type: type, provider_name: name })
+      setTestResult((prev) => ({ ...prev, [name]: data.success ? '✓ OK' : `✗ ${data.message}` }))
+    } catch (e: any) {
+      setTestResult((prev) => ({ ...prev, [name]: `✗ ${e?.response?.data?.detail || e?.message || 'Ошибка'}` }))
+    }
   }
 
   const tabs: { key: Tab; label: string }[] = [

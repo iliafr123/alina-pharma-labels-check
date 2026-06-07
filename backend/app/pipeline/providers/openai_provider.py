@@ -56,18 +56,17 @@ class OpenAIVisionProvider(BaseOCRProvider):
         return OCRResult(blocks=[block], full_text=text)
 
     async def test_connection(self) -> bool:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {self._api_key}"})
-                return resp.status_code == 200
-        except Exception:
-            return False
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {self._api_key}"})
+            resp.raise_for_status()
+            return True
 
 
 class OpenAILLMProvider(BaseLLMProvider):
     def __init__(self, api_key: str, model: str = "gpt-4o"):
         self._api_key = api_key
         self._model = model
+        self._base_url = "https://api.openai.com/v1"
 
     @property
     def provider_name(self) -> str:
@@ -111,9 +110,8 @@ class OpenAILLMProvider(BaseLLMProvider):
             return json.loads(resp.json()["choices"][0]["message"]["content"])
 
     async def test_connection(self) -> bool:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {self._api_key}"})
-                return resp.status_code == 200
-        except Exception:
-            return False
+        # Surface real errors; uses self._base_url so Grok (api.x.ai) works without overriding.
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{self._base_url}/models", headers={"Authorization": f"Bearer {self._api_key}"})
+            resp.raise_for_status()
+            return True

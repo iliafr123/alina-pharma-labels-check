@@ -61,8 +61,8 @@ class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
         return json.loads(raw[start:end]) if start != -1 else {"issues": []}
 
     async def test_connection(self) -> bool:
-        try:
-            await self._generate([{"text": "ping"}])
+        # List models — validates the key without depending on a specific model name.
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{self._API_BASE}?key={self._api_key}")
+            resp.raise_for_status()
             return True
-        except Exception:
-            return False

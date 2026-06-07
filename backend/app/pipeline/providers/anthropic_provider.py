@@ -8,7 +8,7 @@ from app.pipeline.providers.openai_provider import SPELLING_SYSTEM, PEN_SYSTEM, 
 class AnthropicLLMProvider(BaseLLMProvider):
     _API_URL = "https://api.anthropic.com/v1/messages"
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6"):
+    def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-latest"):
         self._api_key = api_key
         self._model = model
 
@@ -49,18 +49,19 @@ class AnthropicLLMProvider(BaseLLMProvider):
         return await self._message(LAYOUT_SYSTEM, messages)
 
     async def test_connection(self) -> bool:
-        try:
-            result = await self._message("Ответь одним словом: OK", [{"role": "user", "content": "ping"}])
+        # GET /v1/models validates the key without depending on a specific model ID.
+        headers = {"x-api-key": self._api_key, "anthropic-version": "2023-06-01"}
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get("https://api.anthropic.com/v1/models", headers=headers)
+            resp.raise_for_status()
             return True
-        except Exception:
-            return False
 
 
 class AnthropicVisionProvider(BaseOCRProvider):
     """Use Claude for OCR on images."""
     _API_URL = "https://api.anthropic.com/v1/messages"
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6"):
+    def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-latest"):
         self._api_key = api_key
         self._model = model
 
