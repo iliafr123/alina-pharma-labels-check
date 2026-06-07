@@ -79,15 +79,29 @@ async def _run_pipeline(task_id: str):
                 llm_provider = get_llm_provider(llm_name, await get_key(llm_name))
 
             # Stage 1: OCR
-            ocr_result = None
+            # Render PDF pages to images and OCR via vision model — design PDFs have
+            # text "в кривых"/scrambled text layers, so pdfplumber output is unreliable.
+            import fitz
+            from app.pipeline.base import OCRResult as _OCRResult
+            image_for_layout = None
             if mockup.file_type.value == "pdf":
-                ocr_result = await extract_text_layer(mockup_bytes)
-            if ocr_result is None:
+                pdfdoc = fitz.open(stream=mockup_bytes, filetype="pdf")
+                page_texts = []
+                for pno in range(min(len(pdfdoc), 3)):
+                    img = pdfdoc[pno].get_pixmap(dpi=170).tobytes("jpeg")
+                    if image_for_layout is None:
+                        image_for_layout = img
+                    page_texts.append((await ocr_provider.extract_text(img)).full_text)
+                npages = len(pdfdoc)
+                pdfdoc.close()
+                ocr_result = _OCRResult(full_text="\n".join(page_texts), pages=npages)
+            else:
+                image_for_layout = mockup_bytes
                 ocr_result = await ocr_provider.extract_text(mockup_bytes)
 
             ocr_cr = CheckResult(
                 id=uuid.uuid4(), task_id=task.id, stage=CheckStage.ocr,
-                issues=[{"full_text": ocr_result.full_text[:500]}],
+                issues=[{"full_text": ocr_result.full_text[:2000]}],
                 created_at=datetime.now(timezone.utc),
             )
             db.add(ocr_cr)
@@ -116,7 +130,7 @@ async def _run_pipeline(task_id: str):
             all_issues.extend(pen_issues)
 
             # Stage 4: Regulatory
-            reg_issues = await run_regulatory_check(ocr_result.full_text, mockup_bytes, category, rules, llm_provider)
+            reg_issues = await run_regulatory_check(ocr_result.full_text, image_for_layout, category, rules, llm_provider)
             db.add(CheckResult(id=uuid.uuid4(), task_id=task.id, stage=CheckStage.regulatory, issues=reg_issues, created_at=datetime.now(timezone.utc)))
             all_issues.extend(reg_issues)
 
