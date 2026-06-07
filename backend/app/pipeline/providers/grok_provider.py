@@ -20,5 +20,6 @@ class GrokLLMProvider(OpenAILLMProvider):
                 json={"model": self._model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "response_format": {"type": "json_object"}, "max_tokens": 4096},
                 headers={"Authorization": f"Bearer {self._api_key}"},
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Grok {resp.status_code}: {resp.text[:400]}")
             return json.loads(resp.json()["choices"][0]["message"]["content"])
