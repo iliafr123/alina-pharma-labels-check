@@ -17,7 +17,11 @@ celery_app.conf.update(
     timezone="Europe/Moscow",
     enable_utc=True,
     task_track_started=True,
-    task_acks_late=True,
+    # ack on receipt (not late): a task killed by a worker restart/crash is NOT redelivered,
+    # so it cannot become a zombie that clogs the single worker's prefetch slot. For our
+    # benchmarking workload, losing an interrupted task (and re-running it) is preferable to
+    # an orphaned-message backlog that silently starves new checks.
+    task_acks_late=False,
     worker_prefetch_multiplier=1,
     # A hung provider call must not freeze the single worker and stall the queue.
     # Soft limit raises a catchable exception (task marked FAILED); hard limit kills as backstop.
