@@ -28,10 +28,7 @@ async def _run_pipeline(task_id: str):
     from app.pipeline.stages.pen_comparison import run_pen_comparison
     from app.pipeline.stages.regulatory_check import run_regulatory_check
     from app.pipeline.report_generator import generate_annotated_pdf
-    from cryptography.fernet import Fernet
-    from app.core.config import settings
-
-    fernet = Fernet(settings.ENCRYPTION_KEY.encode() if len(settings.ENCRYPTION_KEY) < 50 else settings.ENCRYPTION_KEY.encode())
+    from app.services import config_service
 
     async with AsyncSessionLocal() as db:
         # Load task
@@ -62,36 +59,23 @@ async def _run_pipeline(task_id: str):
             product = product_res.scalar_one()
             category = product.category.value
 
-            # Load config
-            config_res = await db.execute(select(SystemConfig))
-            config_rows = {r.key: r for r in config_res.scalars().all()}
+            # Pipeline config from the admin panel (system_config); decryption handled by config_service.
+            pipeline_cfg = await config_service.get_pipeline_config(db)
+            mode = pipeline_cfg.get("pipeline_mode") or task.mode.value
 
-            def get_key(config_key: str) -> str:
-                row = config_rows.get(config_key)
-                if not row or not row.value:
-                    return ""
-                if row.is_encrypted:
-                    try:
-                        return fernet.decrypt(row.value.encode()).decode()
-                    except Exception:
-                        return row.value
-                return row.value
-
-            mode = task.mode.value
-            pipeline_cfg = task.pipeline_config or {}
+            async def get_key(provider: str) -> str:
+                return (await config_service.get_config(db, f"api_key_{provider}")) or ""
 
             if mode == "unified":
-                llm_name = pipeline_cfg.get("unified_llm", "anthropic")
-                llm_key = get_key(f"api_key_{llm_name}")
-                ocr_provider = get_ocr_provider(llm_name, llm_key)
-                llm_provider = get_llm_provider(llm_name, llm_key)
+                llm_name = pipeline_cfg.get("unified_llm") or "anthropic"
+                key = await get_key(llm_name)
+                ocr_provider = get_ocr_provider(llm_name, key)
+                llm_provider = get_llm_provider(llm_name, key)
             else:
-                ocr_name = pipeline_cfg.get("ocr_provider", "anthropic_vision")
-                ocr_key = get_key(f"api_key_{ocr_name.replace('_vision','')}")
-                llm_name = pipeline_cfg.get("llm_provider", "anthropic")
-                llm_key = get_key(f"api_key_{llm_name}")
-                ocr_provider = get_ocr_provider(ocr_name, ocr_key)
-                llm_provider = get_llm_provider(llm_name, llm_key)
+                ocr_name = pipeline_cfg.get("ocr_provider") or "anthropic_vision"
+                llm_name = pipeline_cfg.get("llm_provider") or "anthropic"
+                ocr_provider = get_ocr_provider(ocr_name, await get_key(ocr_name.replace("_vision", "")))
+                llm_provider = get_llm_provider(llm_name, await get_key(llm_name))
 
             # Stage 1: OCR
             ocr_result = None
