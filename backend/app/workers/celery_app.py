@@ -23,6 +23,11 @@ celery_app.conf.update(
     # Soft limit raises a catchable exception (task marked FAILED); hard limit kills as backstop.
     task_soft_time_limit=240,
     task_time_limit=300,
+    # Redis default visibility_timeout is 1h: a task orphaned by a worker restart
+    # (e.g. redeploy) blocks the single prefetch slot for an hour. 900s > task_time_limit
+    # so it redelivers orphans quickly without duplicating still-running work.
+    broker_transport_options={"visibility_timeout": 900},
+    result_backend_transport_options={"visibility_timeout": 900},
     # Dev mode: run tasks synchronously in-process when no Redis broker is available
     task_always_eager=os.getenv("CELERY_EAGER", "false").lower() == "true",
     task_eager_propagates=True,
