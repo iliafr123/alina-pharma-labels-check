@@ -3,7 +3,7 @@ from app.pipeline.providers.yandex_vision import YandexVisionProvider
 from app.pipeline.providers.openai_provider import OpenAIVisionProvider, OpenAILLMProvider
 from app.pipeline.providers.anthropic_provider import AnthropicLLMProvider, AnthropicVisionProvider
 from app.pipeline.providers.gemini_provider import GeminiProvider
-from app.pipeline.providers.grok_provider import GrokLLMProvider
+from app.pipeline.providers.grok_provider import GrokLLMProvider, GrokVisionProvider
 from app.pipeline.providers.abbyy_provider import ABBYYProvider
 
 
@@ -20,6 +20,8 @@ def get_ocr_provider(provider_name: str, api_key: str, *, folder_id: str | None 
             return AnthropicVisionProvider(api_key)
         case "gemini":
             return GeminiProvider(api_key)
+        case "grok":
+            return GrokVisionProvider(api_key)
         case _:
             raise ValueError(f"Unknown OCR provider: {provider_name}")
 
