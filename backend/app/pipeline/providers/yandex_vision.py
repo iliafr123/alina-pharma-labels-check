@@ -4,7 +4,8 @@ from app.pipeline.base import BaseOCRProvider, OCRResult, TextBlock
 
 
 class YandexVisionProvider(BaseOCRProvider):
-    _API_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
+    """Yandex Cloud OCR API (ocr/v1/recognizeText) — current OCR endpoint."""
+    _API_URL = "https://ocr.api.cloud.yandex.net/ocr/v1/recognizeText"
 
     def __init__(self, api_key: str, folder_id: str | None = None):
         self._api_key = api_key
@@ -15,46 +16,38 @@ class YandexVisionProvider(BaseOCRProvider):
         return "yandex_vision"
 
     async def extract_text(self, image_bytes: bytes, hint_lang: str = "ru") -> OCRResult:
-        encoded = base64.b64encode(image_bytes).decode()
         payload = {
-            "folderId": self._folder_id,
-            "analyzeSpecs": [{
-                "content": encoded,
-                "features": [{"type": "TEXT_DETECTION", "textDetectionConfig": {"languageCodes": [hint_lang, "en"]}}],
-            }]
+            "mimeType": "image/jpeg",
+            "languageCodes": ["ru", "en"],
+            "model": "page",
+            "content": base64.b64encode(image_bytes).decode(),
+        }
+        headers = {
+            "Authorization": f"Api-Key {self._api_key}",
+            "x-folder-id": self._folder_id,
+            "x-data-logging-enabled": "true",
         }
         async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                self._API_URL,
-                json=payload,
-                headers={"Authorization": f"Api-Key {self._api_key}"},
-            )
+            resp = await client.post(self._API_URL, json=payload, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-
-        blocks: list[TextBlock] = []
-        try:
-            pages = data["results"][0]["results"][0]["textDetection"]["pages"]
-            for page_num, page in enumerate(pages):
-                for block in page.get("blocks", []):
-                    for line in block.get("lines", []):
-                        text = " ".join(w.get("text", "") for w in line.get("words", []))
-                        verts = line.get("boundingBox", {}).get("vertices", [])
-                        if verts and text.strip():
-                            xs = [v.get("x", 0) for v in verts]
-                            ys = [v.get("y", 0) for v in verts]
-                            blocks.append(TextBlock(
-                                text=text,
-                                bbox={"x": min(xs), "y": min(ys), "w": max(xs) - min(xs), "h": max(ys) - min(ys), "page": page_num},
-                                confidence=line.get("confidence", 0.9),
-                            ))
-        except (KeyError, IndexError):
-            pass
-
-        return OCRResult(blocks=blocks, full_text="\n".join(b.text for b in blocks), pages=len(pages) if "pages" in locals() else 1)
+        # recognizeText returns {"result": {"textAnnotation": {"fullText": "...", "blocks": [...]}}}
+        ann = (data.get("result") or {}).get("textAnnotation") or {}
+        full = ann.get("fullText", "") or ""
+        blocks = []
+        for b in ann.get("blocks", []):
+            for line in b.get("lines", []):
+                txt = line.get("text") or " ".join(w.get("text", "") for w in line.get("words", []))
+                if txt.strip():
+                    blocks.append(TextBlock(text=txt, bbox={"x": 0, "y": 0, "w": 0, "h": 0, "page": 0}))
+        return OCRResult(blocks=blocks, full_text=full or "\n".join(b.text for b in blocks))
 
     async def test_connection(self) -> bool:
-        # 1x1 white pixel PNG — validates key + folderId; errors propagate to admin for a real message.
-        pixel = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg==")
-        await self.extract_text(pixel)
-        return True
+        # Minimal request: 401/403 => bad key/folder; any other response means auth reached the service.
+        try:
+            await self.extract_text(b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9")
+            return True
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                raise
+            return True
