@@ -58,6 +58,7 @@ class GrokVisionProvider(BaseOCRProvider):
         self._api_key = api_key
         self._model = model
         self._resolved = False
+        self._ids: list = []
 
     @property
     def provider_name(self) -> str:
@@ -68,9 +69,12 @@ class GrokVisionProvider(BaseOCRProvider):
             return self._model
         try:
             r = await client.get(f"{self._BASE}/models", headers={"Authorization": f"Bearer {self._api_key}"})
-            ids = [m.get("id") for m in (r.json().get("data") or [])]
-            vis = [i for i in ids if i and "vision" in i]
-            self._model = next((p for p in _VISION_PREFERRED if p in ids), None) or (vis[0] if vis else self._model)
+            ids = [m.get("id") for m in (r.json().get("data") or []) if m.get("id")]
+            self._ids = ids
+            vis = [i for i in ids if "vision" in i or "image" in i]
+            g4 = [i for i in ids if i.startswith("grok-4")]  # grok-4 family is multimodal
+            self._model = (next((p for p in _VISION_PREFERRED if p in ids), None)
+                           or (vis[0] if vis else None) or (g4[0] if g4 else None) or self._model)
         except Exception:
             pass
         self._resolved = True
@@ -90,7 +94,7 @@ class GrokVisionProvider(BaseOCRProvider):
             }
             resp = await client.post(f"{self._BASE}/chat/completions", json=payload, headers={"Authorization": f"Bearer {self._api_key}"})
             if resp.status_code >= 400:
-                raise RuntimeError(f"GrokVision {resp.status_code} (model={model}): {resp.text[:300]}")
+                raise RuntimeError(f"GrokVision {resp.status_code} (model={model}, available={self._ids}): {resp.text[:200]}")
             text = resp.json()["choices"][0]["message"]["content"]
         return OCRResult(blocks=[TextBlock(text=text, bbox={"x": 0, "y": 0, "w": 0, "h": 0, "page": 0})], full_text=text)
 
