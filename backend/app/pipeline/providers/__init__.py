@@ -4,12 +4,16 @@ from app.pipeline.providers.openai_provider import OpenAIVisionProvider, OpenAIL
 from app.pipeline.providers.anthropic_provider import AnthropicLLMProvider, AnthropicVisionProvider
 from app.pipeline.providers.gemini_provider import GeminiProvider
 from app.pipeline.providers.grok_provider import GrokLLMProvider
+from app.pipeline.providers.abbyy_provider import ABBYYProvider
 
 
-def get_ocr_provider(provider_name: str, api_key: str) -> BaseOCRProvider:
+def get_ocr_provider(provider_name: str, api_key: str, *, folder_id: str | None = None,
+                     password: str | None = None, base_url: str | None = None) -> BaseOCRProvider:
     match provider_name:
         case "yandex_vision":
-            return YandexVisionProvider(api_key)
+            return YandexVisionProvider(api_key, folder_id)
+        case "abbyy":
+            return ABBYYProvider(api_key, password or "", base_url or "https://cloud.ocrsdk.com")
         case "openai":
             return OpenAIVisionProvider(api_key)
         case "anthropic" | "anthropic_vision":

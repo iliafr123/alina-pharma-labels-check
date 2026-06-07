@@ -19,7 +19,9 @@ async def get_config(db: AsyncSession = Depends(get_db), _: User = Depends(requi
     pipeline = await config_service.get_pipeline_config(db)
     s3_endpoint = await config_service.get_config(db, "s3_endpoint_url") or ""
     s3_bucket = await config_service.get_config(db, "s3_bucket") or ""
-    return {"api_keys": api_keys, "pipeline": pipeline, "s3": {"endpoint_url": s3_endpoint, "bucket": s3_bucket}}
+    extras = await config_service.get_extras(db)
+    return {"api_keys": api_keys, "pipeline": pipeline,
+            "s3": {"endpoint_url": s3_endpoint, "bucket": s3_bucket}, "extras": extras}
 
 
 @router.put("/config")
@@ -42,6 +44,14 @@ async def update_config(
         encrypted = k in ("access_key", "secret_key")
         await config_service.set_config(db, f"s3_{k}", v or "", is_encrypted=encrypted, updated_by_id=current_user.id)
 
+    extras = payload.get("extras", {})
+    if "yandex_folder_id" in extras:
+        await config_service.set_config(db, "yandex_folder_id", extras.get("yandex_folder_id") or "", updated_by_id=current_user.id)
+    if "abbyy_url" in extras and extras.get("abbyy_url"):
+        await config_service.set_config(db, "abbyy_url", extras["abbyy_url"], updated_by_id=current_user.id)
+    if extras.get("abbyy_password") and not extras["abbyy_password"].startswith("****"):
+        await config_service.set_config(db, "abbyy_password", extras["abbyy_password"], is_encrypted=True, updated_by_id=current_user.id)
+
     return {"message": "Конфигурация сохранена"}
 
 
@@ -53,17 +63,13 @@ async def test_connection(
 ):
     provider_type = payload.get("provider_type", "llm")
     provider_name = payload.get("provider_name", "")
-    api_key = await config_service.get_config(db, f"api_key_{provider_name}") or ""
     try:
         if provider_type == "storage":
-            svc = await get_storage_service(db)
-            ok = svc.test_connection()
+            ok = (await get_storage_service(db)).test_connection()
         elif provider_type == "ocr":
-            provider = get_ocr_provider(provider_name, api_key)
-            ok = await provider.test_connection()
+            ok = await (await config_service.build_ocr_provider(db, provider_name)).test_connection()
         else:
-            provider = get_llm_provider(provider_name, api_key)
-            ok = await provider.test_connection()
+            ok = await (await config_service.build_llm_provider(db, provider_name)).test_connection()
         return {"success": ok, "message": "Подключение успешно" if ok else "Ошибка подключения"}
     except Exception as e:
         return {"success": False, "message": str(e)}

@@ -72,3 +72,30 @@ async def get_masked_api_keys(db: AsyncSession) -> dict:
         raw = await get_config(db, f"api_key_{provider}")
         masked[provider] = mask_key(raw)
     return masked
+
+
+async def get_extras(db: AsyncSession) -> dict:
+    """Non-key provider settings: Yandex folderId (plain), ABBYY password (masked) + url."""
+    return {
+        "yandex_folder_id": (await get_config(db, "yandex_folder_id")) or "",
+        "abbyy_password": mask_key(await get_config(db, "abbyy_password")),
+        "abbyy_url": (await get_config(db, "abbyy_url")) or "https://cloud.ocrsdk.com",
+    }
+
+
+async def build_ocr_provider(db: AsyncSession, name: str):
+    from app.pipeline.providers import get_ocr_provider
+    key_name = "anthropic" if name == "anthropic_vision" else name  # vision-LLMs reuse the LLM key
+    key = (await get_config(db, f"api_key_{key_name}")) or ""
+    extras = {}
+    if name == "yandex_vision":
+        extras["folder_id"] = await get_config(db, "yandex_folder_id")
+    elif name == "abbyy":
+        extras["password"] = await get_config(db, "abbyy_password")
+        extras["base_url"] = await get_config(db, "abbyy_url")
+    return get_ocr_provider(name, key, **extras)
+
+
+async def build_llm_provider(db: AsyncSession, name: str):
+    from app.pipeline.providers import get_llm_provider
+    return get_llm_provider(name, (await get_config(db, f"api_key_{name}")) or "")

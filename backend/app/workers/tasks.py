@@ -67,19 +67,15 @@ async def _run_pipeline(task_id: str):
             pipeline_cfg = {**admin_cfg, **{k: v for k, v in override.items() if v}}
             mode = pipeline_cfg.get("pipeline_mode") or task.mode.value
 
-            async def get_key(provider: str) -> str:
-                return (await config_service.get_config(db, f"api_key_{provider}")) or ""
-
             if mode == "unified":
                 llm_name = pipeline_cfg.get("unified_llm") or "anthropic"
-                key = await get_key(llm_name)
-                ocr_provider = get_ocr_provider(llm_name, key)
-                llm_provider = get_llm_provider(llm_name, key)
+                ocr_provider = await config_service.build_ocr_provider(db, llm_name)
+                llm_provider = await config_service.build_llm_provider(db, llm_name)
             else:
                 ocr_name = pipeline_cfg.get("ocr_provider") or "anthropic_vision"
                 llm_name = pipeline_cfg.get("llm_provider") or "anthropic"
-                ocr_provider = get_ocr_provider(ocr_name, await get_key(ocr_name.replace("_vision", "")))
-                llm_provider = get_llm_provider(llm_name, await get_key(llm_name))
+                ocr_provider = await config_service.build_ocr_provider(db, ocr_name)
+                llm_provider = await config_service.build_llm_provider(db, llm_name)
 
             # Stage 1: OCR
             # Render PDF pages to images and OCR via vision model — design PDFs have

@@ -15,6 +15,7 @@ export default function AdminPage() {
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({})
   const [pipeline, setPipeline] = useState<Record<string, string>>({})
   const [s3, setS3] = useState<Record<string, string>>({})
+  const [extras, setExtras] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [testResult, setTestResult] = useState<Record<string, string>>({})
 
@@ -25,6 +26,7 @@ export default function AdminPage() {
       setApiKeys(r.data.api_keys || {})
       setPipeline(r.data.pipeline || {})
       setS3(r.data.s3 || {})
+      setExtras(r.data.extras || {})
     }).catch(() => {})
     api.get('/admin/logs').then((r) => setLogs(r.data)).catch(() => {})
   }, [])
@@ -41,7 +43,7 @@ export default function AdminPage() {
 
   const saveConfig = async () => {
     setSaving(true)
-    await api.put('/admin/config', { api_keys: apiKeys, pipeline, s3 })
+    await api.put('/admin/config', { api_keys: apiKeys, pipeline, s3, extras })
     setSaving(false)
     alert('Конфигурация сохранена')
   }
@@ -50,7 +52,7 @@ export default function AdminPage() {
     setTestResult((prev) => ({ ...prev, [name]: '...' }))
     try {
       // Persist current keys/config first — the server-side test reads the SAVED key from the DB.
-      await api.put('/admin/config', { api_keys: apiKeys, pipeline, s3 })
+      await api.put('/admin/config', { api_keys: apiKeys, pipeline, s3, extras })
       const { data } = await api.post('/admin/config/test-connection', { provider_type: type, provider_name: name })
       setTestResult((prev) => ({ ...prev, [name]: data.success ? '✓ OK' : `✗ ${data.message}` }))
     } catch (e: any) {
@@ -126,9 +128,15 @@ export default function AdminPage() {
                     <div key={name} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
                       <p className="text-sm font-medium mb-2 capitalize">{name.replace('_', ' ')}</p>
                       <div className="flex gap-2">
-                        <input value={apiKeys[name] || ''} onChange={(e) => setApiKeys({ ...apiKeys, [name]: e.target.value })} placeholder="API ключ" type="password" className="flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs dark:bg-gray-700 dark:text-white" />
+                        <input value={apiKeys[name] || ''} onChange={(e) => setApiKeys({ ...apiKeys, [name]: e.target.value })} placeholder={name === 'abbyy' ? 'Application ID' : 'API ключ'} type={name === 'abbyy' ? 'text' : 'password'} className="flex-1 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs dark:bg-gray-700 dark:text-white" />
                         <button onClick={() => testConn(group.type, name)} className="text-xs bg-gray-100 dark:bg-gray-600 hover:bg-gray-200 px-2 py-1 rounded">Тест</button>
                       </div>
+                      {name === 'yandex_vision' && (
+                        <input value={extras.yandex_folder_id || ''} onChange={(e) => setExtras({ ...extras, yandex_folder_id: e.target.value })} placeholder="Folder ID (каталог, напр. b1g...)" className="w-full mt-2 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs dark:bg-gray-700 dark:text-white" />
+                      )}
+                      {name === 'abbyy' && (
+                        <input value={extras.abbyy_password || ''} onChange={(e) => setExtras({ ...extras, abbyy_password: e.target.value })} placeholder="Application Password" type="password" className="w-full mt-2 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs dark:bg-gray-700 dark:text-white" />
+                      )}
                       {testResult[name] && <p className={`text-xs mt-1 ${testResult[name].startsWith('✓') ? 'text-green-500' : 'text-red-500'}`}>{testResult[name]}</p>}
                     </div>
                   ))}
@@ -155,12 +163,22 @@ export default function AdminPage() {
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
                     <select value={pipeline[key] || ''} onChange={(e) => setPipeline({ ...pipeline, [key]: e.target.value })} className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm dark:bg-gray-700 dark:text-white">
                       <option value="">Выбрать...</option>
-                      <option value="yandex_vision">Yandex Vision</option>
-                      <option value="anthropic_vision">Claude Vision (OCR)</option>
-                      <option value="openai">OpenAI GPT-4o</option>
-                      <option value="anthropic">Anthropic Claude</option>
-                      <option value="gemini">Google Gemini</option>
-                      <option value="grok">xAI Grok</option>
+                      {key === 'ocr_provider' ? (
+                        <>
+                          <option value="yandex_vision">Yandex Vision</option>
+                          <option value="abbyy">ABBYY Cloud OCR</option>
+                          <option value="gemini">Google Gemini (vision)</option>
+                          <option value="openai">OpenAI GPT-4o (vision)</option>
+                          <option value="anthropic_vision">Claude (vision)</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="gemini">Google Gemini</option>
+                          <option value="openai">OpenAI GPT-4o</option>
+                          <option value="anthropic">Anthropic Claude</option>
+                          <option value="grok">xAI Grok</option>
+                        </>
+                      )}
                     </select>
                   </div>
                 ))}

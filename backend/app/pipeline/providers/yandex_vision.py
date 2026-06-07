@@ -6,8 +6,9 @@ from app.pipeline.base import BaseOCRProvider, OCRResult, TextBlock
 class YandexVisionProvider(BaseOCRProvider):
     _API_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, folder_id: str | None = None):
         self._api_key = api_key
+        self._folder_id = folder_id or ""
 
     @property
     def provider_name(self) -> str:
@@ -16,7 +17,7 @@ class YandexVisionProvider(BaseOCRProvider):
     async def extract_text(self, image_bytes: bytes, hint_lang: str = "ru") -> OCRResult:
         encoded = base64.b64encode(image_bytes).decode()
         payload = {
-            "folderId": "",
+            "folderId": self._folder_id,
             "analyzeSpecs": [{
                 "content": encoded,
                 "features": [{"type": "TEXT_DETECTION", "textDetectionConfig": {"languageCodes": [hint_lang, "en"]}}],
@@ -53,10 +54,7 @@ class YandexVisionProvider(BaseOCRProvider):
         return OCRResult(blocks=blocks, full_text="\n".join(b.text for b in blocks), pages=len(pages) if "pages" in locals() else 1)
 
     async def test_connection(self) -> bool:
-        # 1x1 white pixel PNG
+        # 1x1 white pixel PNG — validates key + folderId; errors propagate to admin for a real message.
         pixel = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg==")
-        try:
-            await self.extract_text(pixel)
-            return True
-        except Exception:
-            return False
+        await self.extract_text(pixel)
+        return True
