@@ -60,8 +60,11 @@ async def _run_pipeline(task_id: str):
             product = product_res.scalar_one()
             category = product.category.value
 
-            # Pipeline config from the admin panel (system_config); decryption handled by config_service.
-            pipeline_cfg = await config_service.get_pipeline_config(db)
+            # Pipeline config: admin panel (system_config) is the base; a per-check
+            # pipeline_config overrides it (used for A/B provider comparison).
+            admin_cfg = await config_service.get_pipeline_config(db)
+            override = task.pipeline_config or {}
+            pipeline_cfg = {**admin_cfg, **{k: v for k, v in override.items() if v}}
             mode = pipeline_cfg.get("pipeline_mode") or task.mode.value
 
             async def get_key(provider: str) -> str:
