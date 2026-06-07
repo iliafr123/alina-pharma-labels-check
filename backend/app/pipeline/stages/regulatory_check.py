@@ -24,18 +24,26 @@ async def run_regulatory_check(
                     "meta": {"rule_key": i.get("rule_key")},
                 })
 
-    # Layout analysis (font size, contrast, visual elements)
+    # Layout analysis (font size, contrast, visual elements).
+    # Non-fatal: the mockup may be a PDF/unsupported image for the vision model — don't fail the whole check.
     if image_bytes:
-        layout_result = await llm_provider.analyze_layout(image_bytes, category)
-        for i in layout_result.get("issues", []):
-            if i.get("status") in ("fail", "warn"):
-                issues.append({
-                    "type": "error" if i.get("status") == "fail" else "warning",
-                    "module": "layout",
-                    "description": i.get("description", ""),
-                    "suggestion": "",
-                    "bbox": None,
-                    "meta": {"element": i.get("element")},
-                })
+        try:
+            layout_result = await llm_provider.analyze_layout(image_bytes, category)
+            for i in layout_result.get("issues", []):
+                if i.get("status") in ("fail", "warn"):
+                    issues.append({
+                        "type": "error" if i.get("status") == "fail" else "warning",
+                        "module": "layout",
+                        "description": i.get("description", ""),
+                        "suggestion": "",
+                        "bbox": None,
+                        "meta": {"element": i.get("element")},
+                    })
+        except Exception as e:
+            issues.append({
+                "type": "info", "module": "layout",
+                "description": f"Layout-анализ пропущен: {str(e)[:150]}",
+                "suggestion": "", "bbox": None, "meta": {},
+            })
 
     return issues

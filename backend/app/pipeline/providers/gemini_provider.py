@@ -21,13 +21,32 @@ class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
         # Key in header (not URL) so it never leaks into logs/error messages.
         return {"x-goog-api-key": self._api_key}
 
-    async def _generate(self, parts: list) -> str:
+    async def _generate(self, parts: list, json_output: bool = False) -> str:
         url = f"{self._API_BASE}/{self._model}:generateContent"
-        payload = {"contents": [{"parts": parts}], "generationConfig": {"maxOutputTokens": 4096}}
+        gen_cfg = {"maxOutputTokens": 4096}
+        if json_output:
+            gen_cfg["responseMimeType"] = "application/json"  # force valid JSON
+        payload = {"contents": [{"parts": parts}], "generationConfig": gen_cfg}
         async with httpx.AsyncClient(timeout=90) as client:
             resp = await client.post(url, json=payload, headers=self._headers)
             resp.raise_for_status()
             return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+    @staticmethod
+    def _loads(raw: str) -> dict:
+        # Robust JSON parse: strip markdown fences, never crash the pipeline.
+        s = (raw or "").strip()
+        if s.startswith("```"):
+            s = s.strip("`")
+            if s.lstrip().lower().startswith("json"):
+                s = s.lstrip()[4:]
+        start, end = s.find("{"), s.rfind("}") + 1
+        if start == -1 or end <= start:
+            return {"issues": []}
+        try:
+            return json.loads(s[start:end])
+        except Exception:
+            return {"issues": []}
 
     async def extract_text(self, image_bytes: bytes, hint_lang: str = "ru") -> OCRResult:
         encoded = base64.b64encode(image_bytes).decode()
@@ -41,29 +60,21 @@ class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
 
     async def check_spelling(self, text: str, dictionary_terms: list[str], brand_whitelist: list[str]) -> dict:
         prompt = f"{SPELLING_SYSTEM}\n\nСловарь: {', '.join(dictionary_terms[:100])}\nБренды: {', '.join(brand_whitelist[:50])}\n\nТекст:\n{text[:8000]}\n\nВерни только JSON."
-        raw = await self._generate([{"text": prompt}])
-        start, end = raw.find("{"), raw.rfind("}") + 1
-        return json.loads(raw[start:end]) if start != -1 else {"issues": []}
+        return self._loads(await self._generate([{"text": prompt}], json_output=True))
 
     async def compare_with_pen(self, ocr_text: str, pen_fields: dict, category: str) -> dict:
         prompt = f"{PEN_SYSTEM}\n\nКатегория: {category}\nПЭН:\n{json.dumps(pen_fields, ensure_ascii=False)}\n\nТекст макета:\n{ocr_text[:8000]}\n\nВерни только JSON."
-        raw = await self._generate([{"text": prompt}])
-        start, end = raw.find("{"), raw.rfind("}") + 1
-        return json.loads(raw[start:end]) if start != -1 else {"issues": []}
+        return self._loads(await self._generate([{"text": prompt}], json_output=True))
 
     async def check_regulatory(self, ocr_text: str, category: str, checklist_rules: list[dict]) -> dict:
         prompt = f"{REGULATORY_SYSTEM}\n\nКатегория: {category}\nЧек-лист:\n{json.dumps(checklist_rules, ensure_ascii=False)}\n\nТекст макета:\n{ocr_text[:8000]}\n\nВерни только JSON."
-        raw = await self._generate([{"text": prompt}])
-        start, end = raw.find("{"), raw.rfind("}") + 1
-        return json.loads(raw[start:end]) if start != -1 else {"issues": []}
+        return self._loads(await self._generate([{"text": prompt}], json_output=True))
 
     async def analyze_layout(self, image_bytes: bytes, category: str) -> dict:
         encoded = base64.b64encode(image_bytes).decode()
         prompt = f"{LAYOUT_SYSTEM}\n\nКатегория продукта: {category}. Верни только JSON."
         parts = [{"inline_data": {"mime_type": "image/jpeg", "data": encoded}}, {"text": prompt}]
-        raw = await self._generate(parts)
-        start, end = raw.find("{"), raw.rfind("}") + 1
-        return json.loads(raw[start:end]) if start != -1 else {"issues": []}
+        return self._loads(await self._generate(parts, json_output=True))
 
     async def test_connection(self) -> bool:
         # List models — validates the key without depending on a specific model name.
