@@ -3,7 +3,7 @@ import base64
 import json
 import httpx
 from app.pipeline.base import BaseLLMProvider, BaseOCRProvider, OCRResult, TextBlock
-from app.pipeline.providers.openai_provider import SPELLING_SYSTEM, PEN_SYSTEM, REGULATORY_SYSTEM, LAYOUT_SYSTEM
+from app.pipeline.providers.openai_provider import SPELLING_SYSTEM, PEN_SYSTEM, REGULATORY_SYSTEM, LAYOUT_SYSTEM, BENCHMARK_SYSTEM, _benchmark_user
 
 
 class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
@@ -78,6 +78,10 @@ class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
 
     async def check_spelling(self, text: str, dictionary_terms: list[str], brand_whitelist: list[str]) -> dict:
         prompt = f"{SPELLING_SYSTEM}\n\nСловарь: {', '.join(dictionary_terms[:100])}\nБренды: {', '.join(brand_whitelist[:50])}\n\nТекст:\n{text[:8000]}\n\nВерни только JSON."
+        return self._loads(await self._generate([{"text": prompt}], json_output=True))
+
+    async def compare_benchmark(self, reference_text: str, issues: list) -> dict:
+        prompt = f"{BENCHMARK_SYSTEM}\n\n{_benchmark_user(reference_text, issues)}\n\nВерни только JSON."
         return self._loads(await self._generate([{"text": prompt}], json_output=True))
 
     async def compare_with_pen(self, ocr_text: str, pen_fields: dict, category: str) -> dict:

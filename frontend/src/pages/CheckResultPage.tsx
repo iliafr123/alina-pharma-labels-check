@@ -89,6 +89,40 @@ export default function CheckResultPage() {
         </div>
       </div>
 
+      {/* Benchmark verdict vs manual review */}
+      {task.benchmark && (
+        <div className={`rounded-xl p-4 mb-4 border ${
+          task.benchmark.matched === true
+            ? 'bg-green-50 dark:bg-green-900/30 border-green-300 dark:border-green-700'
+            : task.benchmark.matched === false
+            ? 'bg-yellow-50 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-700'
+            : 'bg-gray-50 dark:bg-gray-800 border-gray-300 dark:border-gray-600'}`}>
+          <p className={`font-semibold text-sm mb-1 ${
+            task.benchmark.matched === true ? 'text-green-700 dark:text-green-300'
+            : task.benchmark.matched === false ? 'text-yellow-700 dark:text-yellow-300'
+            : 'text-gray-600 dark:text-gray-300'}`}>
+            {task.benchmark.matched === true
+              ? '✅ Тест пройден успешно — результаты совпадают с ручной проверкой'
+              : task.benchmark.matched === false
+              ? '⚠️ Есть расхождения с ручной проверкой'
+              : 'ℹ️ Сравнение с ручной проверкой'}
+          </p>
+          {task.benchmark.summary && <p className="text-sm text-gray-600 dark:text-gray-300">{task.benchmark.summary}</p>}
+          {task.benchmark.missing?.length > 0 && (
+            <div className="mt-2 text-xs text-gray-600 dark:text-gray-300">
+              <p className="font-medium">Система не нашла (есть в ручной проверке):</p>
+              <ul className="list-disc list-inside">{task.benchmark.missing.map((m: string, i: number) => <li key={i}>{m}</li>)}</ul>
+            </div>
+          )}
+          {task.benchmark.extra?.length > 0 && (
+            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              <p className="font-medium">Дополнительно нашла система (нет в ручной):</p>
+              <ul className="list-disc list-inside">{task.benchmark.extra.map((m: string, i: number) => <li key={i}>{m}</li>)}</ul>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Progress steps */}
       {task.status !== 'COMPLETED' && task.status !== 'FAILED' && (
         <div className="bg-white dark:bg-gray-800 rounded-xl p-4 mb-4 shadow">

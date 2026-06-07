@@ -31,6 +31,7 @@ async def create_check(
         pen_id=data.pen_id,
         mode=data.mode,
         pipeline_config=data.pipeline_config,
+        reference_text=data.reference_text,
         created_by=current_user.id,
         status=TaskStatus.PENDING,
     )

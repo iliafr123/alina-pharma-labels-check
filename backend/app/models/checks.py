@@ -41,6 +41,8 @@ class CheckTask(Base, TimestampMixin):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reference_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # manual-review "Замечание" text
+    benchmark: Mapped[dict | None] = mapped_column(JSONType, nullable=True)  # comparison verdict vs manual review
     created_by: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("users.id"), nullable=True)
     approved_by: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("users.id"), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

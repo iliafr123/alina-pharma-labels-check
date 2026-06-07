@@ -21,6 +21,17 @@ LAYOUT_SYSTEM = """Ты эксперт по дизайну этикеток. П�
 Проверь: размер шрифта (обязательные реквизиты >= 2 мм), контрастность текста, наличие знака ЕАЭС (ЕАС), штрих-кода, петли Мёбиуса.
 Верни JSON: {"issues": [{"element": "...", "description": "...", "status": "ok|fail|warn"}]}"""
 
+BENCHMARK_SYSTEM = """Ты сравниваешь результаты автоматической проверки макета этикетки с эталоном — результатами ручной проверки специалиста.
+Дан текст ручной проверки (эталонные замечания) и список замечаний, найденных системой.
+Определи, покрывает ли система существенные замечания из ручной проверки.
+Верни JSON: {"matched": true|false, "summary": "краткий вывод на русском", "missing": ["существенные замечания из ручной проверки, которые система НЕ нашла"], "extra": ["замечания системы, которых нет в ручной проверке"]}.
+matched=true только если система выявила все существенные замечания ручной проверки (дополнительные системные замечания допустимы и не влияют на matched)."""
+
+
+def _benchmark_user(reference_text: str, issues: list) -> str:
+    return (f"Ручная проверка (эталон):\n{reference_text[:8000]}\n\n"
+            f"Замечания системы:\n{json.dumps(issues, ensure_ascii=False)[:8000]}")
+
 
 class OpenAIVisionProvider(BaseOCRProvider):
     def __init__(self, api_key: str, model: str = "gpt-4o"):
@@ -85,6 +96,9 @@ class OpenAILLMProvider(BaseLLMProvider):
     async def check_spelling(self, text: str, dictionary_terms: list[str], brand_whitelist: list[str]) -> dict:
         user = f"Словарь: {', '.join(dictionary_terms[:100])}\nБренды: {', '.join(brand_whitelist[:50])}\n\nТекст:\n{text[:8000]}"
         return await self._chat(SPELLING_SYSTEM, user)
+
+    async def compare_benchmark(self, reference_text: str, issues: list) -> dict:
+        return await self._chat(BENCHMARK_SYSTEM, _benchmark_user(reference_text, issues))
 
     async def compare_with_pen(self, ocr_text: str, pen_fields: dict, category: str) -> dict:
         user = f"Категория: {category}\nПЭН:\n{json.dumps(pen_fields, ensure_ascii=False)}\n\nТекст макета:\n{ocr_text[:8000]}"

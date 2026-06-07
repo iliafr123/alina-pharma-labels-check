@@ -7,14 +7,15 @@ export default function NewCheckPage() {
   const navigate = useNavigate()
   const [mockupFile, setMockupFile] = useState<File | null>(null)
   const [penFile, setPenFile] = useState<File | null>(null)
+  const [refFile, setRefFile] = useState<File | null>(null)
   const [productName, setProductName] = useState('')
   const [category, setCategory] = useState('bad')
-  const [mode, setMode] = useState('hybrid')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   const onDropMockup = useCallback((accepted: File[]) => { if (accepted[0]) setMockupFile(accepted[0]) }, [])
   const onDropPen = useCallback((accepted: File[]) => { if (accepted[0]) setPenFile(accepted[0]) }, [])
+  const onDropRef = useCallback((accepted: File[]) => { if (accepted[0]) setRefFile(accepted[0]) }, [])
 
   const { getRootProps: getMockupProps, getInputProps: getMockupInput, isDragActive: isDragMockup } = useDropzone({
     onDrop: onDropMockup, accept: { 'application/pdf': ['.pdf'], 'image/jpeg': ['.jpg', '.jpeg'] }, maxFiles: 1,
@@ -22,22 +23,38 @@ export default function NewCheckPage() {
   const { getRootProps: getPenProps, getInputProps: getPenInput, isDragActive: isDragPen } = useDropzone({
     onDrop: onDropPen, accept: { 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'] }, maxFiles: 1,
   })
+  const { getRootProps: getRefProps, getInputProps: getRefInput, isDragActive: isDragRef } = useDropzone({
+    onDrop: onDropRef,
+    accept: {
+      'application/pdf': ['.pdf'],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      'text/plain': ['.txt'],
+    },
+    maxFiles: 1,
+  })
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!mockupFile || !penFile || !productName) { setError('Загрузите макет, ПЭН и укажите название продукта'); return }
     setLoading(true); setError('')
     try {
-      // Create product
       const { data: product } = await api.post('/products', { name: productName, category })
-      // Upload mockup
       const mf = new FormData(); mf.append('file', mockupFile); mf.append('product_id', product.id)
       const { data: mockup } = await api.post('/uploads/mockup', mf)
-      // Upload PEN
       const pf = new FormData(); pf.append('file', penFile); pf.append('product_id', product.id)
       const { data: pen } = await api.post('/uploads/pen', pf)
-      // Start check
-      const { data: check } = await api.post('/checks', { mockup_id: mockup.id, pen_id: pen.id, mode })
+
+      // Optional manual-review reference ("Замечание")
+      let referenceText: string | null = null
+      if (refFile) {
+        const rf = new FormData(); rf.append('file', refFile)
+        const { data: ref } = await api.post('/uploads/reference', rf)
+        referenceText = ref.text
+      }
+
+      const { data: check } = await api.post('/checks', {
+        mockup_id: mockup.id, pen_id: pen.id, reference_text: referenceText,
+      })
       navigate(`/checks/${check.id}`)
     } catch (e: any) {
       setError(e?.response?.data?.detail || 'Произошла ошибка')
@@ -57,22 +74,13 @@ export default function NewCheckPage() {
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Название продукта</label>
           <input value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="Витамин C 1000 мг" className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#2E75B6]" />
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Категория</label>
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#2E75B6]">
-              <option value="bad">БАД</option>
-              <option value="sport">Спортивное питание</option>
-              <option value="grocery">Бакалея</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Режим проверки</label>
-            <select value={mode} onChange={(e) => setMode(e.target.value)} className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#2E75B6]">
-              <option value="hybrid">Гибридный</option>
-              <option value="unified">Единый LLM</option>
-            </select>
-          </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Категория</label>
+          <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#2E75B6]">
+            <option value="bad">БАД</option>
+            <option value="sport">Спортивное питание</option>
+            <option value="grocery">Бакалея</option>
+          </select>
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Макет (PDF или JPG)</label>
@@ -93,6 +101,22 @@ export default function NewCheckPage() {
               <p className="text-sm text-green-600 dark:text-green-400 font-medium">✓ {penFile.name}</p>
             ) : (
               <p className="text-sm text-gray-500 dark:text-gray-400">{isDragPen ? 'Отпустите файл...' : 'Перетащите DOCX файл ПЭН, или нажмите для выбора'}</p>
+            )}
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Замечание — результат ручной проверки <span className="text-gray-400 font-normal">(необязательно, PDF/DOCX/TXT)</span>
+          </label>
+          <div {...getRefProps()} className={zoneClass(isDragRef)}>
+            <input {...getRefInput()} />
+            {refFile ? (
+              <div className="flex items-center justify-center gap-3">
+                <p className="text-sm text-green-600 dark:text-green-400 font-medium">✓ {refFile.name}</p>
+                <button type="button" onClick={(ev) => { ev.stopPropagation(); setRefFile(null) }} className="text-xs text-red-400 hover:text-red-600">убрать</button>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-400">{isDragRef ? 'Отпустите файл...' : 'Если приложить — система сравнит свой результат с вашей ручной проверкой'}</p>
             )}
           </div>
         </div>

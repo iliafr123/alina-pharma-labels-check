@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from app.core.database import engine, AsyncSessionLocal, Base
 from app.core.security import get_password_hash
 from app.core.config import settings
@@ -18,7 +18,16 @@ from scripts.init_db import INITIAL_DICTIONARY, INITIAL_CHECKLIST_RULES
 async def run():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    print("Таблицы созданы (create_all).")
+        # Lightweight migrations for columns added after the table already existed (Postgres).
+        for stmt in (
+            "ALTER TABLE check_tasks ADD COLUMN IF NOT EXISTS reference_text TEXT",
+            "ALTER TABLE check_tasks ADD COLUMN IF NOT EXISTS benchmark JSONB",
+        ):
+            try:
+                await conn.execute(text(stmt))
+            except Exception:
+                pass  # SQLite / column already present
+    print("Таблицы созданы (create_all) + миграции колонок.")
 
     async with AsyncSessionLocal() as db:
         admin_email = "admin@alina-pharma.ru"

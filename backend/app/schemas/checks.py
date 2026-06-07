@@ -9,6 +9,7 @@ class CheckCreate(BaseModel):
     pen_id: uuid.UUID
     mode: PipelineMode = PipelineMode.hybrid
     pipeline_config: dict | None = None
+    reference_text: str | None = None  # optional manual-review "Замечание" content
 
 
 class IssueResponse(BaseModel):
@@ -39,5 +40,6 @@ class CheckTaskResponse(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error: str | None = None
+    benchmark: dict | None = None  # verdict vs manual review (matched / missing / extra)
     results: list[CheckResultResponse] = []
     model_config = {"from_attributes": True}

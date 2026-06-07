@@ -130,3 +130,37 @@ async def confirm_zip(
     mapping = json.loads(mapping_json)
     cat = ProductCategory(category)
     return await file_service.confirm_zip_upload(db, content, mapping, current_user.id, cat)
+
+
+@router.post("/uploads/reference")
+async def upload_reference(
+    file: UploadFile = File(...),
+    _: User = Depends(require_specialist),
+):
+    """Extract plain text from a manual-review 'Замечание' file (PDF/DOCX/TXT)."""
+    content = await file.read()
+    name = (file.filename or "").lower()
+    text = ""
+    try:
+        if name.endswith(".pdf"):
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                text = "\n".join((p.extract_text() or "") for p in pdf.pages)
+        elif name.endswith(".docx"):
+            from docx import Document
+            doc = Document(io.BytesIO(content))
+            parts = [p.text for p in doc.paragraphs if p.text.strip()]
+            for tbl in doc.tables:
+                for row in tbl.rows:
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            parts.append(cell.text.strip())
+            text = "\n".join(parts)
+        else:  # txt / csv / fallback
+            text = content.decode("utf-8", errors="ignore")
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл замечаний: {e}")
+    text = text.strip()
+    if not text:
+        raise HTTPException(400, "Файл замечаний пуст или текст не распознан")
+    return {"text": text[:20000], "filename": file.filename}

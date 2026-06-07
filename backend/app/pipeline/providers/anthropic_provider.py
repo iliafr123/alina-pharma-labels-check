@@ -2,7 +2,7 @@ import base64
 import json
 import httpx
 from app.pipeline.base import BaseLLMProvider, BaseOCRProvider, OCRResult, TextBlock
-from app.pipeline.providers.openai_provider import SPELLING_SYSTEM, PEN_SYSTEM, REGULATORY_SYSTEM, LAYOUT_SYSTEM
+from app.pipeline.providers.openai_provider import SPELLING_SYSTEM, PEN_SYSTEM, REGULATORY_SYSTEM, LAYOUT_SYSTEM, BENCHMARK_SYSTEM, _benchmark_user
 
 
 class AnthropicLLMProvider(BaseLLMProvider):
@@ -31,6 +31,9 @@ class AnthropicLLMProvider(BaseLLMProvider):
     async def check_spelling(self, text: str, dictionary_terms: list[str], brand_whitelist: list[str]) -> dict:
         user = f"Словарь: {', '.join(dictionary_terms[:100])}\nБренды: {', '.join(brand_whitelist[:50])}\n\nТекст:\n{text[:8000]}"
         return await self._message(SPELLING_SYSTEM, [{"role": "user", "content": user}])
+
+    async def compare_benchmark(self, reference_text: str, issues: list) -> dict:
+        return await self._message(BENCHMARK_SYSTEM, [{"role": "user", "content": _benchmark_user(reference_text, issues)}])
 
     async def compare_with_pen(self, ocr_text: str, pen_fields: dict, category: str) -> dict:
         user = f"Категория: {category}\nПЭН:\n{json.dumps(pen_fields, ensure_ascii=False)}\n\nТекст макета:\n{ocr_text[:8000]}"

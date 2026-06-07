@@ -27,6 +27,7 @@ async def _run_pipeline(task_id: str):
     from app.pipeline.stages.spelling_check import run_spelling_check
     from app.pipeline.stages.pen_comparison import run_pen_comparison
     from app.pipeline.stages.regulatory_check import run_regulatory_check
+    from app.pipeline.stages.benchmark import run_benchmark
     from app.pipeline.report_generator import generate_annotated_pdf
     from app.services import config_service
 
@@ -128,8 +129,13 @@ async def _run_pipeline(task_id: str):
 
             db.add(CheckResult(id=uuid.uuid4(), task_id=task.id, stage=CheckStage.report, issues=[], annotated_pdf_s3_key=annotated_pdf_key, created_at=datetime.now(timezone.utc)))
 
+            # Optional benchmark: compare against manual-review reference, if provided.
+            benchmark = None
+            if task.reference_text:
+                benchmark = await run_benchmark(task.reference_text, all_issues, llm_provider)
+
             await db.execute(update(CheckTask).where(CheckTask.id == task.id).values(
-                status=TaskStatus.COMPLETED, completed_at=datetime.now(timezone.utc)
+                status=TaskStatus.COMPLETED, completed_at=datetime.now(timezone.utc), benchmark=benchmark
             ))
             await db.commit()
             logger.info(f"Task {task_id} completed with {len(all_issues)} issues")
