@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import httpx
@@ -27,10 +28,27 @@ class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
         if json_output:
             gen_cfg["responseMimeType"] = "application/json"  # force valid JSON
         payload = {"contents": [{"parts": parts}], "generationConfig": gen_cfg}
-        async with httpx.AsyncClient(timeout=90) as client:
-            resp = await client.post(url, json=payload, headers=self._headers)
-            resp.raise_for_status()
-            return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        last_exc = None
+        # Retry transient errors (429/5xx) — Gemini Flash returns 503 under load.
+        for attempt in range(4):
+            try:
+                async with httpx.AsyncClient(timeout=90) as client:
+                    resp = await client.post(url, json=payload, headers=self._headers)
+                    resp.raise_for_status()
+                    return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            except httpx.HTTPStatusError as e:
+                last_exc = e
+                if e.response.status_code in (429, 500, 502, 503, 504) and attempt < 3:
+                    await asyncio.sleep(2 ** attempt)  # 1s, 2s, 4s
+                    continue
+                raise
+            except (httpx.ConnectError, httpx.ReadTimeout) as e:
+                last_exc = e
+                if attempt < 3:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise
+        raise last_exc
 
     @staticmethod
     def _loads(raw: str) -> dict:
