@@ -8,7 +8,7 @@ from app.pipeline.providers.openai_provider import SPELLING_SYSTEM, PEN_SYSTEM, 
 class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
     _API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
-    def __init__(self, api_key: str, model: str = "gemini-1.5-pro"):
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
         self._api_key = api_key
         self._model = model
 
@@ -16,11 +16,16 @@ class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
     def provider_name(self) -> str:
         return "gemini"
 
+    @property
+    def _headers(self) -> dict:
+        # Key in header (not URL) so it never leaks into logs/error messages.
+        return {"x-goog-api-key": self._api_key}
+
     async def _generate(self, parts: list) -> str:
-        url = f"{self._API_BASE}/{self._model}:generateContent?key={self._api_key}"
+        url = f"{self._API_BASE}/{self._model}:generateContent"
         payload = {"contents": [{"parts": parts}], "generationConfig": {"maxOutputTokens": 4096}}
         async with httpx.AsyncClient(timeout=90) as client:
-            resp = await client.post(url, json=payload)
+            resp = await client.post(url, json=payload, headers=self._headers)
             resp.raise_for_status()
             return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
 
@@ -63,6 +68,6 @@ class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
     async def test_connection(self) -> bool:
         # List models — validates the key without depending on a specific model name.
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(f"{self._API_BASE}?key={self._api_key}")
+            resp = await client.get(self._API_BASE, headers=self._headers)
             resp.raise_for_status()
             return True
