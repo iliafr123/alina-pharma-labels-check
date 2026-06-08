@@ -47,6 +47,69 @@ def generate_excel_report(task_id: str, issues: list[dict]) -> bytes:
     return buf.getvalue()
 
 
+def generate_md_report(task_id: str, product_name: str, issues: list[dict]) -> bytes:
+    errs = sum(1 for i in issues if i.get("type") == "error")
+    warns = sum(1 for i in issues if i.get("type") == "warning")
+    lines = [
+        f"# Отчёт о проверке макета",
+        f"- Продукт: {product_name}",
+        f"- ID проверки: {task_id}",
+        f"- Всего замечаний: {len(issues)} (ошибок: {errs}, предупреждений: {warns})",
+        "",
+        "| Тип | Модуль | Описание | Предложение |",
+        "|---|---|---|---|",
+    ]
+    for i in issues:
+        d = str(i.get("description", "")).replace("|", "\\|").replace("\n", " ")
+        s = str(i.get("suggestion", "") or "").replace("|", "\\|").replace("\n", " ")
+        lines.append(f"| {i.get('type','')} | {i.get('module','')} | {d} | {s} |")
+    return ("\n".join(lines)).encode("utf-8")
+
+
+def generate_batch_md(batch_id: str, items: list[dict]) -> bytes:
+    """items: [{name, status, issues:[...]}] — consolidated batch report as Markdown."""
+    lines = [f"# Пакетная проверка этикеток", f"Batch ID: {batch_id}", f"Этикеток: {len(items)}", "",
+             "## Сводка", "", "| # | Этикетка | Статус | Замечаний |", "|---|---|---|---|"]
+    for i, it in enumerate(items, 1):
+        lines.append(f"| {i} | {it['name']} | {it['status']} | {len(it.get('issues') or [])} |")
+    lines.append("")
+    for it in items:
+        lines.append(f"## {it['name']} — {it['status']} — замечаний: {len(it.get('issues') or [])}")
+        lines.append("")
+        lines.append("| Тип | Модуль | Описание | Предложение |")
+        lines.append("|---|---|---|---|")
+        for x in (it.get("issues") or []):
+            d = str(x.get("description", "")).replace("|", "\\|").replace("\n", " ")
+            s = str(x.get("suggestion", "") or "").replace("|", "\\|").replace("\n", " ")
+            lines.append(f"| {x.get('type','')} | {x.get('module','')} | {d} | {s} |")
+        lines.append("")
+    return ("\n".join(lines)).encode("utf-8")
+
+
+def generate_batch_word(batch_id: str, items: list[dict]) -> bytes:
+    doc = DocxDocument()
+    doc.add_heading("Пакетная проверка этикеток", 0)
+    doc.add_paragraph(f"Batch ID: {batch_id}")
+    doc.add_paragraph(f"Этикеток: {len(items)}")
+    doc.add_heading("Сводка", 1)
+    st = doc.add_table(rows=1, cols=4); st.style = "Table Grid"
+    for i, h in enumerate(["#", "Этикетка", "Статус", "Замечаний"]):
+        st.rows[0].cells[i].text = h; st.rows[0].cells[i].paragraphs[0].runs[0].font.bold = True
+    for i, it in enumerate(items, 1):
+        c = st.add_row().cells
+        c[0].text = str(i); c[1].text = it["name"]; c[2].text = it["status"]; c[3].text = str(len(it.get("issues") or []))
+    for it in items:
+        doc.add_heading(f"{it['name']} — замечаний: {len(it.get('issues') or [])}", 1)
+        t = doc.add_table(rows=1, cols=4); t.style = "Table Grid"
+        for i, h in enumerate(["Тип", "Модуль", "Описание", "Предложение"]):
+            t.rows[0].cells[i].text = h; t.rows[0].cells[i].paragraphs[0].runs[0].font.bold = True
+        for x in (it.get("issues") or []):
+            r = t.add_row().cells
+            r[0].text = str(x.get("type", "")); r[1].text = str(x.get("module", ""))
+            r[2].text = str(x.get("description", "")); r[3].text = str(x.get("suggestion", "") or "")
+    buf = io.BytesIO(); doc.save(buf); return buf.getvalue()
+
+
 def generate_word_report(task_id: str, product_name: str, issues: list[dict]) -> bytes:
     doc = DocxDocument()
     doc.add_heading(f"Отчёт о проверке макета", 0)

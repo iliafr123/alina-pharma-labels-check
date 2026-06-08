@@ -55,6 +55,8 @@ class AnthropicLLMProvider(BaseLLMProvider):
         return "anthropic"
 
     async def _message(self, system: str, messages: list) -> dict:
+        if getattr(self, "_focus", ""):
+            system = f"ОСОБЫЙ ФОКУС ПРОВЕРКИ (высокий приоритет): {self._focus}\n\n" + system
         headers = {"x-api-key": self._api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
         async with httpx.AsyncClient(timeout=90) as client:
             if not self._resolved:

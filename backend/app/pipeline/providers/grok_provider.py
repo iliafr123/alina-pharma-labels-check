@@ -45,6 +45,8 @@ class GrokLLMProvider(OpenAILLMProvider):
         return self._model
 
     async def _chat(self, system: str, user: str) -> dict:
+        if getattr(self, "_focus", ""):
+            system = f"ОСОБЫЙ ФОКУС ПРОВЕРКИ (высокий приоритет): {self._focus}\n\n" + system
         async with httpx.AsyncClient(timeout=90) as client:
             model = await self._resolve_model(client)
             resp = await client.post(

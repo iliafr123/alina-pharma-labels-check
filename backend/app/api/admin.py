@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends
+import io
+import csv
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
 from datetime import datetime, timezone
+from app.models.references import DictionaryEntry, BrandWhitelist, ChecklistRule, RuleCategory
 from app.core.database import get_db
 from app.core.deps import require_admin
 from app.models.users import User
@@ -21,8 +24,13 @@ async def get_config(db: AsyncSession = Depends(get_db), _: User = Depends(requi
     s3_endpoint = await config_service.get_config(db, "s3_endpoint_url") or ""
     s3_bucket = await config_service.get_config(db, "s3_bucket") or ""
     extras = await config_service.get_extras(db)
+    debug_mode = (await config_service.get_config(db, "debug_mode")) == "true"
+    providers_available = {}
+    for p in config_service.API_KEY_PROVIDERS:
+        providers_available[p] = bool(await config_service.get_config(db, f"api_key_{p}"))
     return {"api_keys": api_keys, "pipeline": pipeline,
-            "s3": {"endpoint_url": s3_endpoint, "bucket": s3_bucket}, "extras": extras}
+            "s3": {"endpoint_url": s3_endpoint, "bucket": s3_bucket}, "extras": extras,
+            "debug_mode": debug_mode, "providers_available": providers_available}
 
 
 @router.put("/config")
@@ -44,6 +52,9 @@ async def update_config(
     for k, v in s3.items():
         encrypted = k in ("access_key", "secret_key")
         await config_service.set_config(db, f"s3_{k}", v or "", is_encrypted=encrypted, updated_by_id=current_user.id)
+
+    if "debug_mode" in payload:
+        await config_service.set_config(db, "debug_mode", "true" if payload["debug_mode"] else "false", updated_by_id=current_user.id)
 
     extras = payload.get("extras", {})
     if "yandex_folder_id" in extras:
@@ -90,6 +101,57 @@ async def purge_queue(db: AsyncSession = Depends(get_db), _: User = Depends(requ
         status=TaskStatus.FAILED, error="stale/purged", completed_at=datetime.now(timezone.utc)))
     await db.commit()
     return {"purged_messages": purged, "pending_marked_failed": res.rowcount}
+
+
+def _parse_rows(filename: str, content: bytes) -> list[list[str]]:
+    """Return rows (list of cell-string lists) from .xlsx or .csv content."""
+    if filename.lower().endswith((".xlsx", ".xlsm")):
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        ws = wb.active
+        return [[("" if c is None else str(c)).strip() for c in row] for row in ws.iter_rows(values_only=True)]
+    text = content.decode("utf-8-sig", errors="replace")
+    delim = ";" if text.count(";") > text.count(",") else ","
+    return [[c.strip() for c in row] for row in csv.reader(io.StringIO(text), delimiter=delim)]
+
+
+@router.post("/import/{kind}")
+async def import_reference(
+    kind: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Import dictionary terms / brands / checklist rules from .xlsx or .csv (skips duplicates)."""
+    if kind not in ("dictionary", "brands", "checklist"):
+        raise HTTPException(400, "kind: dictionary | brands | checklist")
+    rows = _parse_rows(file.filename or "f.csv", await file.read())
+    # Drop a header row if the first cell looks like a header.
+    if rows and rows[0] and rows[0][0].lower() in ("term", "термин", "слово", "brand", "бренд", "rule_key", "ключ"):
+        rows = rows[1:]
+    added = 0
+    for r in rows:
+        if not r or not r[0]:
+            continue
+        try:
+            if kind == "dictionary":
+                term = r[0]
+                if not (await db.execute(select(DictionaryEntry).where(DictionaryEntry.term == term))).scalar_one_or_none():
+                    db.add(DictionaryEntry(term=term, category=(r[1] if len(r) > 1 and r[1] else "general"))); added += 1
+            elif kind == "brands":
+                if not (await db.execute(select(BrandWhitelist).where(BrandWhitelist.brand_name == r[0]))).scalar_one_or_none():
+                    db.add(BrandWhitelist(brand_name=r[0])); added += 1
+            else:  # checklist: rule_key, description, [category]
+                key = r[0]
+                desc = r[1] if len(r) > 1 else r[0]
+                cat = (r[2].lower() if len(r) > 2 and r[2] else "all")
+                cat = cat if cat in RuleCategory._value2member_map_ else "all"
+                if not (await db.execute(select(ChecklistRule).where(ChecklistRule.rule_key == key))).scalar_one_or_none():
+                    db.add(ChecklistRule(rule_key=key, description=desc, category=RuleCategory(cat))); added += 1
+        except Exception:
+            continue
+    await db.commit()
+    return {"kind": kind, "rows": len(rows), "added": added}
 
 
 @router.get("/logs")

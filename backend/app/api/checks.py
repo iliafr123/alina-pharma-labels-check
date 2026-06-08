@@ -13,11 +13,30 @@ from app.models.files import Mockup, PenDocument
 from app.models.products import Product
 from app.models.audit_log import AuditLog
 from app.services.storage import storage_service, get_storage_service
-from app.services.export_service import generate_excel_report, generate_word_report
-from app.schemas.checks import CheckCreate, CheckTaskResponse
+from app.services.export_service import (generate_excel_report, generate_word_report, generate_md_report,
+                                         generate_batch_md, generate_batch_word)
+from app.services import config_service
+from app.schemas.checks import CheckCreate, CheckTaskResponse, BatchCreate
 import io
 
 router = APIRouter(prefix="/checks", tags=["checks"])
+
+# LLM analyzers and OCR providers the pipeline supports (vision-capable LLMs double as OCR).
+_LLM_PROVIDERS = ["gemini", "grok", "openai", "anthropic"]
+_OCR_PROVIDERS = ["yandex_vision", "gemini", "openai", "anthropic", "abbyy"]
+
+
+@router.get("/pipeline-options")
+async def pipeline_options(db: AsyncSession = Depends(get_db), _: User = Depends(require_specialist)):
+    """For the check screen: whether DEBUG MODE is on + which providers have a configured key."""
+    debug = (await config_service.get_config(db, "debug_mode")) == "true"
+    llm = [p for p in _LLM_PROVIDERS if await config_service.get_config(db, f"api_key_{p}")]
+    ocr = []
+    for p in _OCR_PROVIDERS:
+        key_name = "anthropic" if p in ("anthropic", "anthropic_vision") else p
+        if await config_service.get_config(db, f"api_key_{key_name}"):
+            ocr.append(p)
+    return {"debug_mode": debug, "llm_providers": llm, "ocr_providers": ocr}
 
 
 @router.post("", response_model=CheckTaskResponse, status_code=201)
@@ -32,6 +51,7 @@ async def create_check(
         mode=data.mode,
         pipeline_config=data.pipeline_config,
         reference_text=data.reference_text,
+        focus_prompt=data.focus_prompt,
         created_by=current_user.id,
         status=TaskStatus.PENDING,
     )
@@ -43,6 +63,65 @@ async def create_check(
     from app.workers.tasks import run_check_pipeline
     run_check_pipeline.delay(str(task.id))
     return task
+
+
+@router.post("/batch", status_code=201)
+async def create_batch(
+    data: BatchCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_specialist),
+):
+    """Batch check: up to 20 label pairs sharing config/focus, grouped by a batch_id."""
+    if not data.items or len(data.items) > 20:
+        raise HTTPException(400, "От 1 до 20 этикеток за раз")
+    batch_id = uuid.uuid4().hex
+    ids = []
+    for it in data.items:
+        task = CheckTask(mockup_id=it.mockup_id, pen_id=it.pen_id, pipeline_config=data.pipeline_config,
+                         focus_prompt=data.focus_prompt, batch_id=batch_id, created_by=current_user.id,
+                         status=TaskStatus.PENDING)
+        db.add(task)
+        await db.flush()
+        ids.append(str(task.id))
+    db.add(AuditLog(user_id=current_user.id, action="create_batch", resource_type="batch", resource_id=batch_id))
+    await db.commit()
+    from app.workers.tasks import run_check_pipeline
+    for tid in ids:
+        run_check_pipeline.delay(tid)
+    return {"batch_id": batch_id, "count": len(ids), "task_ids": ids}
+
+
+@router.get("/batch/{batch_id}", response_model=list[CheckTaskResponse])
+async def get_batch(batch_id: str, db: AsyncSession = Depends(get_db), _: User = Depends(require_specialist)):
+    res = await db.execute(select(CheckTask).where(CheckTask.batch_id == batch_id).order_by(CheckTask.created_at))
+    return res.scalars().all()
+
+
+async def _batch_items(db: AsyncSession, batch_id: str) -> list[dict]:
+    res = await db.execute(select(CheckTask).where(CheckTask.batch_id == batch_id).order_by(CheckTask.created_at))
+    items = []
+    for t in res.scalars().all():
+        name = str(t.mockup_id)[:8]
+        mk = (await db.execute(select(Mockup).where(Mockup.id == t.mockup_id))).scalar_one_or_none()
+        if mk is not None:
+            pr = (await db.execute(select(Product).where(Product.id == mk.product_id))).scalar_one_or_none()
+            if pr is not None:
+                name = pr.name
+        issues = [i for cr in t.results if cr.issues for i in cr.issues if isinstance(i, dict) and i.get("module")]
+        items.append({"name": name, "status": t.status.value, "issues": issues})
+    return items
+
+
+@router.get("/batch/{batch_id}/export/{fmt}")
+async def export_batch(batch_id: str, fmt: str, db: AsyncSession = Depends(get_db), _: User = Depends(require_specialist)):
+    items = await _batch_items(db, batch_id)
+    if fmt == "word":
+        data = generate_batch_word(batch_id, items)
+        mt = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"; ext = "docx"
+    else:
+        data = generate_batch_md(batch_id, items); mt = "text/markdown"; ext = "md"
+    return StreamingResponse(io.BytesIO(data), media_type=mt,
+                             headers={"Content-Disposition": f"attachment; filename=batch_{batch_id}.{ext}"})
 
 
 @router.get("/history", response_model=list[CheckTaskResponse])
@@ -145,6 +224,22 @@ async def export_word(
         io.BytesIO(word_bytes),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f"attachment; filename=report_{task_id}.docx"},
+    )
+
+
+@router.get("/{task_id}/export/md")
+async def export_md(
+    task_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_specialist),
+):
+    result = await db.execute(select(CheckResult).where(CheckResult.task_id == task_id))
+    results = result.scalars().all()
+    issues = [i for cr in results if cr.issues for i in cr.issues if isinstance(i, dict) and i.get("module")]
+    md_bytes = generate_md_report(str(task_id), "Продукт", issues)
+    return StreamingResponse(
+        io.BytesIO(md_bytes), media_type="text/markdown",
+        headers={"Content-Disposition": f"attachment; filename=report_{task_id}.md"},
     )
 
 

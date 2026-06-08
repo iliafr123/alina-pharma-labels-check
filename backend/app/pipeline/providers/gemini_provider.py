@@ -23,6 +23,9 @@ class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
         return {"x-goog-api-key": self._api_key}
 
     async def _generate(self, parts: list, json_output: bool = False) -> str:
+        # Optional per-check focus instruction (set on the provider for analysis calls only).
+        if json_output and getattr(self, "_focus", ""):
+            parts = [{"text": f"ОСОБЫЙ ФОКУС ПРОВЕРКИ (высокий приоритет): {self._focus}"}] + parts
         url = f"{self._API_BASE}/{self._model}:generateContent"
         gen_cfg = {"maxOutputTokens": 4096}
         if json_output:

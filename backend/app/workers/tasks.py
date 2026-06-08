@@ -77,6 +77,11 @@ async def _run_pipeline(task_id: str):
                 ocr_provider = await config_service.build_ocr_provider(db, ocr_name)
                 llm_provider = await config_service.build_llm_provider(db, llm_name)
 
+            # Optional per-check focus instruction → steers the analysis LLM (not OCR).
+            focus = (task.focus_prompt or "").strip()
+            if focus:
+                llm_provider._focus = focus
+
             # Stage 1: OCR
             # Render PDF pages to images and OCR via vision model — design PDFs have
             # text "в кривых"/scrambled text layers, so pdfplumber output is unreliable.

@@ -22,6 +22,8 @@ async def run():
         for stmt in (
             "ALTER TABLE check_tasks ADD COLUMN IF NOT EXISTS reference_text TEXT",
             "ALTER TABLE check_tasks ADD COLUMN IF NOT EXISTS benchmark JSONB",
+            "ALTER TABLE check_tasks ADD COLUMN IF NOT EXISTS focus_prompt TEXT",
+            "ALTER TABLE check_tasks ADD COLUMN IF NOT EXISTS batch_id VARCHAR(64)",
         ):
             try:
                 await conn.execute(text(stmt))

@@ -84,6 +84,8 @@ class OpenAILLMProvider(BaseLLMProvider):
         return "openai"
 
     async def _chat(self, system: str, user: str) -> dict:
+        if getattr(self, "_focus", ""):
+            system = f"ОСОБЫЙ ФОКУС ПРОВЕРКИ (высокий приоритет): {self._focus}\n\n" + system
         async with httpx.AsyncClient(timeout=90) as client:
             resp = await client.post(
                 "https://api.openai.com/v1/chat/completions",

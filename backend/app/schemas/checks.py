@@ -10,6 +10,18 @@ class CheckCreate(BaseModel):
     mode: PipelineMode = PipelineMode.hybrid
     pipeline_config: dict | None = None
     reference_text: str | None = None  # optional manual-review "Замечание" content
+    focus_prompt: str | None = None    # optional instruction to focus the LLM on specific checks
+
+
+class BatchItem(BaseModel):
+    mockup_id: uuid.UUID
+    pen_id: uuid.UUID
+
+
+class BatchCreate(BaseModel):
+    items: list[BatchItem]                 # up to 20 label pairs
+    pipeline_config: dict | None = None    # shared across the batch
+    focus_prompt: str | None = None
 
 
 class IssueResponse(BaseModel):
