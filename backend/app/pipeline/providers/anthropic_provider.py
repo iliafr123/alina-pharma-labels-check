@@ -16,6 +16,23 @@ def _pick_claude(ids: list):
             or (ids[0] if ids else None))
 
 
+def _loads(text: str) -> dict:
+    """Tolerant JSON extraction from a model reply (handles ``` fences, prose, truncation)."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = t.split("```", 2)[1] if "```" in t[3:] else t[3:]
+        if t.lstrip().lower().startswith("json"):
+            t = t.lstrip()[4:]
+    s, e = t.find("{"), t.rfind("}") + 1
+    cand = t[s:e] if s != -1 and e > s else t
+    for attempt in (cand, cand + "]}", cand + "}", cand + '"}]}'):
+        try:
+            return json.loads(attempt, strict=False)
+        except Exception:
+            continue
+    return {"issues": []}
+
+
 async def _resolve_model(client, api_key: str, current: str) -> str:
     try:
         r = await client.get(_MODELS_URL, headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"})
@@ -43,15 +60,11 @@ class AnthropicLLMProvider(BaseLLMProvider):
             if not self._resolved:
                 self._model = await _resolve_model(client, self._api_key, self._model)
                 self._resolved = True
-            payload = {"model": self._model, "max_tokens": 4096, "system": system, "messages": messages}
+            payload = {"model": self._model, "max_tokens": 8192, "system": system, "messages": messages}
             resp = await client.post(self._API_URL, json=payload, headers=headers)
             if resp.status_code >= 400:
                 raise RuntimeError(f"Anthropic {resp.status_code} (model={self._model}): {resp.text[:200]}")
-            text = resp.json()["content"][0]["text"]
-            # Extract JSON from response
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            return json.loads(text[start:end]) if start != -1 else {"issues": []}
+            return _loads(resp.json()["content"][0]["text"])
 
     async def check_spelling(self, text: str, dictionary_terms: list[str], brand_whitelist: list[str]) -> dict:
         user = f"Словарь: {', '.join(dictionary_terms[:100])}\nБренды: {', '.join(brand_whitelist[:50])}\n\nТекст:\n{text[:8000]}"
