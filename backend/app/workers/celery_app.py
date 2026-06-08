@@ -32,6 +32,10 @@ celery_app.conf.update(
     # so it redelivers orphans quickly without duplicating still-running work.
     broker_transport_options={"visibility_timeout": 900},
     result_backend_transport_options={"visibility_timeout": 900},
+    # Recycle the worker child to release memory before it gets OOM-killed (single small worker;
+    # PDF rendering + LLM payloads accumulate RSS). Restart after 8 tasks or ~420 MB resident.
+    worker_max_tasks_per_child=8,
+    worker_max_memory_per_child=420000,  # KB
     # Dev mode: run tasks synchronously in-process when no Redis broker is available
     task_always_eager=os.getenv("CELERY_EAGER", "false").lower() == "true",
     task_eager_propagates=True,

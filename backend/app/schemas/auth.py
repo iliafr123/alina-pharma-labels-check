@@ -5,7 +5,7 @@ from app.models.users import UserRole
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str  # login may be an email or a plain username (e.g. "admin")
     password: str
 
 
@@ -37,7 +37,7 @@ class UserResponse(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    email: EmailStr | None = None
+    email: str | None = None  # allow plain usernames, not only emails
     role: UserRole | None = None
     is_active: bool | None = None
     password: str | None = None

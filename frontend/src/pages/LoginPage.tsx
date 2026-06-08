@@ -37,9 +37,9 @@ export default function LoginPage() {
         <p className="text-gray-500 text-center mb-6 text-sm">Система проверки макетов этикеток</p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Логин</label>
             <input
-              type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              type="text" value={email} onChange={(e) => setEmail(e.target.value)}
               required autoFocus
               className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
             />
