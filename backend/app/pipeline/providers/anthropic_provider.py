@@ -4,6 +4,26 @@ import httpx
 from app.pipeline.base import BaseLLMProvider, BaseOCRProvider, OCRResult, TextBlock
 from app.pipeline.providers.openai_provider import SPELLING_SYSTEM, PEN_SYSTEM, REGULATORY_SYSTEM, LAYOUT_SYSTEM, BENCHMARK_SYSTEM, _benchmark_user
 
+_MODELS_URL = "https://api.anthropic.com/v1/models"
+
+
+def _pick_claude(ids: list):
+    """Choose a current Claude model from the account's /v1/models (sonnet > haiku > non-opus > opus)."""
+    ids = [i for i in ids if i]
+    return (next((i for i in ids if "sonnet" in i), None)
+            or next((i for i in ids if "haiku" in i), None)
+            or next((i for i in ids if i.startswith("claude") and "opus" not in i), None)
+            or (ids[0] if ids else None))
+
+
+async def _resolve_model(client, api_key: str, current: str) -> str:
+    try:
+        r = await client.get(_MODELS_URL, headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"})
+        ids = [m.get("id") for m in (r.json().get("data") or [])]
+        return _pick_claude(ids) or current
+    except Exception:
+        return current
+
 
 class AnthropicLLMProvider(BaseLLMProvider):
     _API_URL = "https://api.anthropic.com/v1/messages"
@@ -11,6 +31,7 @@ class AnthropicLLMProvider(BaseLLMProvider):
     def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-latest"):
         self._api_key = api_key
         self._model = model
+        self._resolved = False
 
     @property
     def provider_name(self) -> str:
@@ -18,10 +39,14 @@ class AnthropicLLMProvider(BaseLLMProvider):
 
     async def _message(self, system: str, messages: list) -> dict:
         headers = {"x-api-key": self._api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-        payload = {"model": self._model, "max_tokens": 4096, "system": system, "messages": messages}
         async with httpx.AsyncClient(timeout=90) as client:
+            if not self._resolved:
+                self._model = await _resolve_model(client, self._api_key, self._model)
+                self._resolved = True
+            payload = {"model": self._model, "max_tokens": 4096, "system": system, "messages": messages}
             resp = await client.post(self._API_URL, json=payload, headers=headers)
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Anthropic {resp.status_code} (model={self._model}): {resp.text[:200]}")
             text = resp.json()["content"][0]["text"]
             # Extract JSON from response
             start = text.find("{")
@@ -67,6 +92,7 @@ class AnthropicVisionProvider(BaseOCRProvider):
     def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-latest"):
         self._api_key = api_key
         self._model = model
+        self._resolved = False
 
     @property
     def provider_name(self) -> str:
@@ -75,16 +101,20 @@ class AnthropicVisionProvider(BaseOCRProvider):
     async def extract_text(self, image_bytes: bytes, hint_lang: str = "ru") -> OCRResult:
         encoded = base64.b64encode(image_bytes).decode()
         headers = {"x-api-key": self._api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-        payload = {
-            "model": self._model, "max_tokens": 4096,
-            "messages": [{"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": encoded}},
-                {"type": "text", "text": f"Извлеки весь текст с этого изображения. Язык: {hint_lang}. Верни только текст без пояснений."},
-            ]}],
-        }
         async with httpx.AsyncClient(timeout=60) as client:
+            if not self._resolved:
+                self._model = await _resolve_model(client, self._api_key, self._model)
+                self._resolved = True
+            payload = {
+                "model": self._model, "max_tokens": 4096,
+                "messages": [{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": encoded}},
+                    {"type": "text", "text": f"Извлеки весь текст с этого изображения. Язык: {hint_lang}. Верни только текст без пояснений."},
+                ]}],
+            }
             resp = await client.post(self._API_URL, json=payload, headers=headers)
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Anthropic vision {resp.status_code} (model={self._model}): {resp.text[:200]}")
             text = resp.json()["content"][0]["text"]
         block = TextBlock(text=text, bbox={"x": 0, "y": 0, "w": 0, "h": 0, "page": 0})
         return OCRResult(blocks=[block], full_text=text)
