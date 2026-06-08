@@ -93,7 +93,6 @@ export default function CheckResultPage() {
               <button onClick={() => download('word')} className={dlBtn}>Word</button>
               <button onClick={() => download('excel')} className={dlBtn}>Excel</button>
               <button onClick={() => download('md')} className={dlBtn}>MD</button>
-              {pdfUrl && <a href={pdfUrl} target="_blank" rel="noreferrer" className={dlBtn} title="Размеченный PDF — ошибки показаны на макете">Размеченный PDF</a>}
               <button onClick={handleApprove} disabled={approving} className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded-lg transition disabled:opacity-50">
                 {approving ? '...' : '✓ Согласовать'}
               </button>
