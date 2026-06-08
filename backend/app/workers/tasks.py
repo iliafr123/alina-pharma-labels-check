@@ -92,7 +92,11 @@ async def _run_pipeline(task_id: str):
                 pdfdoc = fitz.open(stream=mockup_bytes, filetype="pdf")
                 page_texts = []
                 for pno in range(min(len(pdfdoc), 3)):
-                    img = pdfdoc[pno].get_pixmap(dpi=170).tobytes("jpeg")
+                    # Lower DPI + free the pixmap each page — keeps the single worker under its
+                    # memory limit (high-DPI multi-page rendering was OOM-killing the worker).
+                    pix = pdfdoc[pno].get_pixmap(dpi=130)
+                    img = pix.tobytes("jpeg")
+                    pix = None
                     if image_for_layout is None:
                         image_for_layout = img
                     page_texts.append((await ocr_provider.extract_text(img)).full_text)

@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useState, useEffect } from 'react'
+import { api } from '../../api/client'
 
 export default function Header() {
   const user = useAuthStore((s) => s.user)
@@ -15,6 +16,13 @@ export default function Header() {
 
   const handleLogout = () => { logout(); navigate('/login') }
 
+  const changeMyPassword = async () => {
+    const p = window.prompt('Новый пароль (не короче 6 символов):')
+    if (!p) return
+    try { await api.put('/users/me/password', { password: p }); alert('Пароль изменён') }
+    catch (e: any) { alert(e?.response?.data?.detail || 'Ошибка') }
+  }
+
   return (
     <header className="h-14 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-6">
       <div />
@@ -26,6 +34,9 @@ export default function Header() {
           <p className="font-medium text-gray-800 dark:text-white">{user?.email}</p>
           <p className="text-xs text-gray-400">{user?.role === 'admin' ? 'Администратор' : 'Специалист'}</p>
         </div>
+        <button onClick={changeMyPassword} className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400" title="Сменить свой пароль">
+          Пароль
+        </button>
         <button
           onClick={handleLogout}
           className="text-sm text-red-500 hover:text-red-700 font-medium"

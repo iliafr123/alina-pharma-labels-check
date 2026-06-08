@@ -43,6 +43,12 @@ export default function AdminPage() {
     await api.delete(`/users/${id}`)
     setUsers(users.map((u) => u.id === id ? { ...u, is_active: false } : u))
   }
+  const setUserPassword = async (id: string, email: string) => {
+    const p = window.prompt(`Новый пароль для ${email} (не короче 6 символов):`)
+    if (!p) return
+    try { await api.put(`/users/${id}`, { password: p }); alert('Пароль изменён') }
+    catch (e: any) { alert(e?.response?.data?.detail || 'Ошибка') }
+  }
 
   const saveConfig = async () => {
     setSaving(true)
@@ -124,7 +130,10 @@ export default function AdminPage() {
                     <td className="py-2 text-gray-500">{u.role}</td>
                     <td className="py-2"><span className={`text-xs px-2 py-0.5 rounded-full ${u.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{u.is_active ? 'Активен' : 'Деактивирован'}</span></td>
                     <td className="py-2">
-                      {u.is_active && <button onClick={() => deactivateUser(u.id)} className="text-xs text-red-400 hover:text-red-600">Деактивировать</button>}
+                      <div className="flex gap-3">
+                        <button onClick={() => setUserPassword(u.id, u.email)} className="text-xs text-[#2E75B6] hover:underline">Сменить пароль</button>
+                        {u.is_active && <button onClick={() => deactivateUser(u.id)} className="text-xs text-red-400 hover:text-red-600">Деактивировать</button>}
+                      </div>
                     </td>
                   </tr>
                 ))}

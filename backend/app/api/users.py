@@ -43,6 +43,22 @@ async def create_user(
     return user
 
 
+@router.put("/me/password")
+async def change_my_password(
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    new = (payload or {}).get("password") or ""
+    if len(new) < 6:
+        raise HTTPException(status_code=400, detail="Пароль должен быть не короче 6 символов")
+    current_user.password_hash = get_password_hash(new)
+    db.add(current_user)
+    db.add(AuditLog(user_id=current_user.id, action="change_own_password", resource_type="user", resource_id=str(current_user.id)))
+    await db.commit()
+    return {"message": "Пароль изменён"}
+
+
 @router.put("/{user_id}", response_model=UserResponse)
 async def update_user(
     user_id: uuid.UUID,
