@@ -4,6 +4,7 @@ import { useAuthStore } from '../../store/authStore'
 const links = [
   { to: '/', label: 'Дашборд', icon: '📊' },
   { to: '/checks/new', label: 'Новая проверка', icon: '➕' },
+  { to: '/checks/batch', label: 'Пакетная проверка', icon: '🗂️' },
   { to: '/history', label: 'Журнал проверок', icon: '📋' },
   { to: '/references', label: 'Справочники', icon: '📚' },
 ]

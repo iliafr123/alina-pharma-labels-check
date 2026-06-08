@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import { api } from '../api/client'
@@ -12,6 +12,14 @@ export default function NewCheckPage() {
   const [category, setCategory] = useState('bad')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [focusPrompt, setFocusPrompt] = useState('')
+  const [opts, setOpts] = useState<{ debug_mode: boolean; llm_providers: string[]; ocr_providers: string[] }>({ debug_mode: false, llm_providers: [], ocr_providers: [] })
+  const [pmode, setPmode] = useState('') // '' = настройки админки
+  const [unifiedLlm, setUnifiedLlm] = useState('')
+  const [ocrProvider, setOcrProvider] = useState('')
+  const [llmProvider, setLlmProvider] = useState('')
+
+  useEffect(() => { api.get('/checks/pipeline-options').then(({ data }) => setOpts(data)).catch(() => {}) }, [])
 
   const onDropMockup = useCallback((accepted: File[]) => { if (accepted[0]) setMockupFile(accepted[0]) }, [])
   const onDropPen = useCallback((accepted: File[]) => { if (accepted[0]) setPenFile(accepted[0]) }, [])
@@ -52,8 +60,15 @@ export default function NewCheckPage() {
         referenceText = ref.text
       }
 
+      let pipeline_config: any = null
+      if (opts.debug_mode && pmode) {
+        pipeline_config = pmode === 'unified'
+          ? { pipeline_mode: 'unified', unified_llm: unifiedLlm }
+          : { pipeline_mode: 'hybrid', ocr_provider: ocrProvider, llm_provider: llmProvider }
+      }
       const { data: check } = await api.post('/checks', {
         mockup_id: mockup.id, pen_id: pen.id, reference_text: referenceText,
+        focus_prompt: focusPrompt || null, pipeline_config,
       })
       navigate(`/checks/${check.id}`)
     } catch (e: any) {
@@ -120,6 +135,44 @@ export default function NewCheckPage() {
             )}
           </div>
         </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Фокус проверки <span className="text-gray-400 font-normal">(необязательно — на чём LLM сделать акцент)</span>
+          </label>
+          <textarea value={focusPrompt} onChange={(e) => setFocusPrompt(e.target.value)} rows={2}
+            placeholder="Напр.: проверь только состав и соответствие номеров ТР ТС; не придирайся к регистру и тире"
+            className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#2E75B6]" />
+        </div>
+
+        {opts.debug_mode && (
+          <div className="border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 rounded-xl p-4 space-y-3">
+            <p className="text-xs font-semibold text-amber-700 dark:text-amber-300">⚙ DEBUG MODE — выбор связки (только из настроенных в админке ключей)</p>
+            <select value={pmode} onChange={(e) => setPmode(e.target.value)} className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white">
+              <option value="">По настройкам админки</option>
+              <option value="unified">LLM-only (модель сама читает и проверяет)</option>
+              <option value="hybrid">OCR + LLM</option>
+            </select>
+            {pmode === 'unified' && (
+              <select value={unifiedLlm} onChange={(e) => setUnifiedLlm(e.target.value)} className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white">
+                <option value="">— выберите LLM —</option>
+                {opts.llm_providers.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            )}
+            {pmode === 'hybrid' && (
+              <div className="grid grid-cols-2 gap-2">
+                <select value={ocrProvider} onChange={(e) => setOcrProvider(e.target.value)} className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white">
+                  <option value="">— OCR —</option>
+                  {opts.ocr_providers.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <select value={llmProvider} onChange={(e) => setLlmProvider(e.target.value)} className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white">
+                  <option value="">— LLM —</option>
+                  {opts.llm_providers.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+        )}
+
         {error && <p className="text-red-500 text-sm">{error}</p>}
         <button type="submit" disabled={loading || !mockupFile || !penFile || !productName} className="w-full bg-[#1F4E79] hover:bg-[#2E75B6] text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-40 text-sm">
           {loading ? 'Загрузка и запуск...' : '▶ Запустить проверку'}

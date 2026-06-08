@@ -4,6 +4,7 @@ import AppLayout from './components/Layout/AppLayout'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import NewCheckPage from './pages/NewCheckPage'
+import BatchCheckPage from './pages/BatchCheckPage'
 import CheckResultPage from './pages/CheckResultPage'
 import HistoryPage from './pages/HistoryPage'
 import ReferencesPage from './pages/ReferencesPage'
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
           <Route index element={<DashboardPage />} />
           <Route path="checks/new" element={<NewCheckPage />} />
+          <Route path="checks/batch" element={<BatchCheckPage />} />
           <Route path="checks/:id" element={<CheckResultPage />} />
           <Route path="history" element={<HistoryPage />} />
           <Route path="references" element={<ReferencesPage />} />

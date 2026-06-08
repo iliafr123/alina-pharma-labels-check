@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 
-type Tab = 'users' | 'providers' | 'pipeline' | 'storage' | 'logs'
+type Tab = 'users' | 'providers' | 'pipeline' | 'storage' | 'references' | 'logs'
 
 const PROVIDERS_OCR = ['yandex_vision', 'abbyy']
 const PROVIDERS_LLM = ['openai', 'anthropic', 'gemini', 'grok']
@@ -18,6 +18,8 @@ export default function AdminPage() {
   const [extras, setExtras] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [testResult, setTestResult] = useState<Record<string, string>>({})
+  const [debugMode, setDebugMode] = useState(false)
+  const [importMsg, setImportMsg] = useState<Record<string, string>>({})
 
   useEffect(() => {
     api.get('/users').then((r) => setUsers(r.data)).catch(() => {})
@@ -27,6 +29,7 @@ export default function AdminPage() {
       setPipeline(r.data.pipeline || {})
       setS3(r.data.s3 || {})
       setExtras(r.data.extras || {})
+      setDebugMode(r.data.debug_mode || false)
     }).catch(() => {})
     api.get('/admin/logs').then((r) => setLogs(r.data)).catch(() => {})
   }, [])
@@ -43,9 +46,20 @@ export default function AdminPage() {
 
   const saveConfig = async () => {
     setSaving(true)
-    await api.put('/admin/config', { api_keys: apiKeys, pipeline, s3, extras })
+    await api.put('/admin/config', { api_keys: apiKeys, pipeline, s3, extras, debug_mode: debugMode })
     setSaving(false)
     alert('Конфигурация сохранена')
+  }
+
+  const importRef = async (kind: string, file: File) => {
+    setImportMsg((p) => ({ ...p, [kind]: '...' }))
+    try {
+      const fd = new FormData(); fd.append('file', file)
+      const { data } = await api.post(`/admin/import/${kind}`, fd)
+      setImportMsg((p) => ({ ...p, [kind]: `✓ Добавлено ${data.added} из ${data.rows} строк` }))
+    } catch (e: any) {
+      setImportMsg((p) => ({ ...p, [kind]: `✗ ${e?.response?.data?.detail || 'Ошибка'}` }))
+    }
   }
 
   const testConn = async (type: string, name: string) => {
@@ -65,6 +79,7 @@ export default function AdminPage() {
     { key: 'providers', label: 'Провайдеры AI/OCR' },
     { key: 'pipeline', label: 'Конфигурация пайплайна' },
     { key: 'storage', label: 'Хранилище (Selectel)' },
+    { key: 'references', label: 'Справочники' },
     { key: 'logs', label: 'Логи' },
   ]
 
@@ -195,7 +210,33 @@ export default function AdminPage() {
                 </select>
               </div>
             )}
+            <div className="border-t dark:border-gray-700 pt-4 mt-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={debugMode} onChange={(e) => setDebugMode(e.target.checked)} className="w-4 h-4" />
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">DEBUG MODE</span>
+              </label>
+              <p className="text-xs text-gray-400 mt-1">Когда включён — в экране «Новая проверка» можно выбрать любую связку OCR+LLM (только из настроенных здесь ключей). Для подбора и тестов.</p>
+            </div>
             <button onClick={saveConfig} disabled={saving} className="bg-[#1F4E79] text-white px-5 py-2 rounded-lg text-sm">{saving ? 'Сохранение...' : 'Сохранить конфигурацию'}</button>
+          </div>
+        )}
+
+        {tab === 'references' && (
+          <div className="space-y-5 max-w-xl">
+            <p className="text-sm text-gray-500 dark:text-gray-400">Загрузка справочников файлом (.xlsx или .csv). Дубликаты пропускаются.</p>
+            {[
+              { kind: 'dictionary', label: 'Словарь терминов', hint: 'Колонки: термин [, категория]' },
+              { kind: 'brands', label: 'Бренды (whitelist)', hint: 'Колонка: название бренда' },
+              { kind: 'checklist', label: 'Нормативный чек-лист', hint: 'Колонки: ключ, описание [, категория: all/bad/sport/grocery]' },
+            ].map((r) => (
+              <div key={r.kind} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-200">{r.label}</p>
+                <p className="text-xs text-gray-400 mb-2">{r.hint}</p>
+                <input type="file" accept=".xlsx,.xlsm,.csv" onChange={(e) => { const f = e.target.files?.[0]; if (f) importRef(r.kind, f); e.target.value = '' }}
+                  className="text-xs text-gray-600 dark:text-gray-300 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:bg-[#1F4E79] file:text-white file:text-xs" />
+                {importMsg[r.kind] && <p className={`text-xs mt-2 ${importMsg[r.kind].startsWith('✓') ? 'text-green-500' : 'text-red-500'}`}>{importMsg[r.kind]}</p>}
+              </div>
+            ))}
           </div>
         )}
 

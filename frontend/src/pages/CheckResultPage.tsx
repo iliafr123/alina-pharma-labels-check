@@ -59,6 +59,16 @@ export default function CheckResultPage() {
     alert('Макет согласован для отправки в типографию')
   }
 
+  const download = async (fmt: 'excel' | 'word' | 'md') => {
+    const ext: Record<string, string> = { excel: 'xlsx', word: 'docx', md: 'md' }
+    const res = await api.get(`/checks/${id}/export/${fmt}`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url; a.download = `report_${id}.${ext[fmt]}`; a.click()
+    URL.revokeObjectURL(url)
+  }
+  const dlBtn = 'text-xs border border-gray-300 dark:border-gray-600 px-3 py-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700'
+
   const completedStages = task?.results?.map((r: any) => r.stage) || []
   const allStages = ['ocr', 'spelling', 'pen', 'regulatory', 'report']
   const filteredIssues = filter ? issues.filter((i) => i.type === filter) : issues
@@ -80,7 +90,10 @@ export default function CheckResultPage() {
           </span>
           {task.status === 'COMPLETED' && (
             <>
-              <a href={`/api/v1/checks/${id}/export/excel`} className="text-xs border border-gray-300 dark:border-gray-600 px-3 py-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">Excel</a>
+              <button onClick={() => download('word')} className={dlBtn}>Word</button>
+              <button onClick={() => download('excel')} className={dlBtn}>Excel</button>
+              <button onClick={() => download('md')} className={dlBtn}>MD</button>
+              {pdfUrl && <a href={pdfUrl} target="_blank" rel="noreferrer" className={dlBtn} title="Размеченный PDF — ошибки показаны на макете">Размеченный PDF</a>}
               <button onClick={handleApprove} disabled={approving} className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded-lg transition disabled:opacity-50">
                 {approving ? '...' : '✓ Согласовать'}
               </button>
