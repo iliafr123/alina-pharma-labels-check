@@ -84,7 +84,7 @@ class OpenAIVisionProvider(BaseOCRProvider):
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}},
                 ],
             }],
-            "max_tokens": 4096,
+            "max_tokens": 8192,
         }
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
@@ -120,7 +120,7 @@ class OpenAILLMProvider(BaseLLMProvider):
         async with httpx.AsyncClient(timeout=90) as client:
             resp = await client.post(
                 "https://api.openai.com/v1/chat/completions",
-                json={"model": self._model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "response_format": {"type": "json_object"}, "max_tokens": 4096},
+                json={"model": self._model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "response_format": {"type": "json_object"}, "max_tokens": 8192},
                 headers={"Authorization": f"Bearer {self._api_key}"},
             )
             resp.raise_for_status()

@@ -51,7 +51,7 @@ class GrokLLMProvider(OpenAILLMProvider):
             model = await self._resolve_model(client)
             resp = await client.post(
                 f"{self._base_url}/chat/completions",
-                json={"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "response_format": {"type": "json_object"}, "max_tokens": 4096},
+                json={"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "response_format": {"type": "json_object"}, "max_tokens": 8192},
                 headers={"Authorization": f"Bearer {self._api_key}"},
             )
             if resp.status_code >= 400:
@@ -97,7 +97,7 @@ class GrokVisionProvider(BaseOCRProvider):
                     {"type": "text", "text": f"Извлеки весь текст с этого изображения. Язык: {hint_lang}. Верни только текст, без пояснений."},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}},
                 ]}],
-                "max_tokens": 4096,
+                "max_tokens": 8192,
             }
             resp = await client.post(f"{self._BASE}/chat/completions", json=payload, headers={"Authorization": f"Bearer {self._api_key}"})
             if resp.status_code >= 400:
