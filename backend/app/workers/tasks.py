@@ -85,17 +85,37 @@ async def _run_pipeline(task_id: str):
             # Stage 1: OCR
             # Render PDF pages to images and OCR via vision model — design PDFs have
             # text "в кривых"/scrambled text layers, so pdfplumber output is unreliable.
-            import fitz
+            import fitz, io as _io
+            from PIL import Image, ImageChops
             from app.pipeline.base import OCRResult as _OCRResult
+
+            def _prep_image(raw: bytes) -> bytes:
+                """Crop empty (white) margins and cap long side to 2400px → crisp OCR input.
+                Print PDFs are often an A4 sheet with a small label; cropping makes text large."""
+                try:
+                    im = Image.open(_io.BytesIO(raw)).convert("RGB")
+                    bg = Image.new("RGB", im.size, (255, 255, 255))
+                    bbox = ImageChops.difference(im, bg).getbbox()
+                    if bbox:
+                        im = im.crop(bbox)
+                    w, h = im.size
+                    if max(w, h) > 2400:
+                        s = 2400 / max(w, h)
+                        im = im.resize((int(w * s), int(h * s)))
+                    out = _io.BytesIO(); im.save(out, "JPEG", quality=90)
+                    return out.getvalue()
+                except Exception:
+                    return raw
+
             image_for_layout = None
             if mockup.file_type.value == "pdf":
                 pdfdoc = fitz.open(stream=mockup_bytes, filetype="pdf")
                 page_texts = []
                 for pno in range(min(len(pdfdoc), 3)):
-                    # Lower DPI + free the pixmap each page — keeps the single worker under its
-                    # memory limit (high-DPI multi-page rendering was OOM-killing the worker).
-                    pix = pdfdoc[pno].get_pixmap(dpi=130)
-                    img = pix.tobytes("jpeg")
+                    # Render at high DPI then crop whitespace — small labels on A4 sheets were
+                    # rendered too small at low DPI, garbling OCR. Pixmap freed each page (memory).
+                    pix = pdfdoc[pno].get_pixmap(dpi=340)
+                    img = _prep_image(pix.tobytes("png"))
                     pix = None
                     if image_for_layout is None:
                         image_for_layout = img
@@ -104,8 +124,8 @@ async def _run_pipeline(task_id: str):
                 pdfdoc.close()
                 ocr_result = _OCRResult(full_text="\n".join(page_texts), pages=npages)
             else:
-                image_for_layout = mockup_bytes
-                ocr_result = await ocr_provider.extract_text(mockup_bytes)
+                image_for_layout = _prep_image(mockup_bytes)
+                ocr_result = await ocr_provider.extract_text(image_for_layout)
 
             ocr_cr = CheckResult(
                 id=uuid.uuid4(), task_id=task.id, stage=CheckStage.ocr,
