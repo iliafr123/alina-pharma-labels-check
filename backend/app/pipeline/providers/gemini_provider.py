@@ -27,9 +27,10 @@ class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
         if json_output and getattr(self, "_focus", ""):
             parts = [{"text": f"ОСОБЫЙ ФОКУС ПРОВЕРКИ (высокий приоритет): {self._focus}"}] + parts
         url = f"{self._API_BASE}/{self._model}:generateContent"
-        gen_cfg = {"maxOutputTokens": 8192}  # 23-item checklist with explanations needs headroom
+        gen_cfg = {"maxOutputTokens": 8192}
         if json_output:
             gen_cfg["responseMimeType"] = "application/json"  # force valid JSON
+            gen_cfg["maxOutputTokens"] = 16384  # 23-item checklist on hi-res OCR can be long
         payload = {"contents": [{"parts": parts}], "generationConfig": gen_cfg}
         last_exc = None
         # Retry transient errors (429/5xx) — Gemini Flash returns 503 under load.
