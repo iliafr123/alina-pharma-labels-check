@@ -3,7 +3,7 @@ import base64
 import json
 import httpx
 from app.pipeline.base import BaseLLMProvider, BaseOCRProvider, OCRResult, TextBlock
-from app.pipeline.providers.openai_provider import SPELLING_SYSTEM, PEN_SYSTEM, REGULATORY_SYSTEM, LAYOUT_SYSTEM, BENCHMARK_SYSTEM, _benchmark_user
+from app.pipeline.providers.openai_provider import SPELLING_SYSTEM, PEN_SYSTEM, REGULATORY_SYSTEM, LAYOUT_SYSTEM, BENCHMARK_SYSTEM, _benchmark_user, CHECKLIST_SYSTEM, _checklist_user
 
 
 class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
@@ -89,6 +89,10 @@ class GeminiProvider(BaseLLMProvider, BaseOCRProvider):
 
     async def compare_with_pen(self, ocr_text: str, pen_fields: dict, category: str) -> dict:
         prompt = f"{PEN_SYSTEM}\n\nКатегория: {category}\nПЭН:\n{json.dumps(pen_fields, ensure_ascii=False)}\n\nТекст макета:\n{ocr_text[:8000]}\n\nВерни только JSON."
+        return self._loads(await self._generate([{"text": prompt}], json_output=True))
+
+    async def build_checklist(self, ocr_text: str, pen_fields: dict, items: list) -> dict:
+        prompt = f"{CHECKLIST_SYSTEM}\n\n{_checklist_user(ocr_text, pen_fields, items)}\n\nВерни только JSON."
         return self._loads(await self._generate([{"text": prompt}], json_output=True))
 
     async def check_regulatory(self, ocr_text: str, category: str, checklist_rules: list[dict]) -> dict:

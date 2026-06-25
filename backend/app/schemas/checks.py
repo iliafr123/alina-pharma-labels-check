@@ -53,5 +53,6 @@ class CheckTaskResponse(BaseModel):
     completed_at: datetime | None = None
     error: str | None = None
     benchmark: dict | None = None  # verdict vs manual review (matched / missing / extra)
+    checklist: list | None = None  # per-item ✓/✗ verdict over mandatory marking elements
     results: list[CheckResultResponse] = []
     model_config = {"from_attributes": True}

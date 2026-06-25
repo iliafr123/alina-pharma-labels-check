@@ -2,7 +2,7 @@ import base64
 import json
 import httpx
 from app.pipeline.base import BaseLLMProvider, BaseOCRProvider, OCRResult, TextBlock
-from app.pipeline.providers.openai_provider import SPELLING_SYSTEM, PEN_SYSTEM, REGULATORY_SYSTEM, LAYOUT_SYSTEM, BENCHMARK_SYSTEM, _benchmark_user
+from app.pipeline.providers.openai_provider import SPELLING_SYSTEM, PEN_SYSTEM, REGULATORY_SYSTEM, LAYOUT_SYSTEM, BENCHMARK_SYSTEM, _benchmark_user, CHECKLIST_SYSTEM, _checklist_user
 
 _MODELS_URL = "https://api.anthropic.com/v1/models"
 
@@ -74,6 +74,9 @@ class AnthropicLLMProvider(BaseLLMProvider):
 
     async def compare_benchmark(self, reference_text: str, issues: list) -> dict:
         return await self._message(BENCHMARK_SYSTEM, [{"role": "user", "content": _benchmark_user(reference_text, issues)}])
+
+    async def build_checklist(self, ocr_text: str, pen_fields: dict, items: list) -> dict:
+        return await self._message(CHECKLIST_SYSTEM, [{"role": "user", "content": _checklist_user(ocr_text, pen_fields, items)}])
 
     async def compare_with_pen(self, ocr_text: str, pen_fields: dict, category: str) -> dict:
         user = f"Категория: {category}\nПЭН:\n{json.dumps(pen_fields, ensure_ascii=False)}\n\nТекст макета:\n{ocr_text[:8000]}"

@@ -101,6 +101,34 @@ export default function CheckResultPage() {
         </div>
       </div>
 
+      {/* Structured checklist (доп. требования): ✓/✗ per mandatory element */}
+      {task.status === 'COMPLETED' && Array.isArray(task.checklist) && task.checklist.length > 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 mb-4 shadow">
+          <p className="font-semibold text-sm mb-3 text-gray-700 dark:text-gray-200">Чек-лист обязательных элементов маркировки</p>
+          <table className="w-full text-sm">
+            <tbody>
+              {task.checklist.map((c: any, i: number) => {
+                const ok = c.status === 'ok'
+                const na = c.status === 'na'
+                return (
+                  <tr key={i} className="border-b dark:border-gray-700 align-top">
+                    <td className="py-1.5 w-7 text-center">
+                      <span className={ok ? 'text-green-600' : na ? 'text-gray-400' : 'text-red-600'}>{ok ? '✓' : na ? '—' : '✗'}</span>
+                    </td>
+                    <td className="py-1.5 pr-3 font-medium text-gray-700 dark:text-gray-200 w-1/3">{c.item}</td>
+                    <td className="py-1.5 text-gray-500 dark:text-gray-400 text-xs">{c.explanation}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          <p className="text-xs text-gray-400 mt-2">
+            ✓ соответствует · ✗ не соответствует/отсутствует · — неприменимо.
+            Итог: {task.checklist.filter((c: any) => c.status === 'ok').length} из {task.checklist.length} пунктов в норме.
+          </p>
+        </div>
+      )}
+
       {/* Benchmark verdict vs manual review */}
       {task.benchmark && (
         <div className={`rounded-xl p-4 mb-4 border ${

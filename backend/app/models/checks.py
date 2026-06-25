@@ -45,6 +45,7 @@ class CheckTask(Base, TimestampMixin):
     focus_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)  # per-check LLM focus instruction
     batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # groups a batch run
     benchmark: Mapped[dict | None] = mapped_column(JSONType, nullable=True)  # comparison verdict vs manual review
+    checklist: Mapped[list | None] = mapped_column(JSONType, nullable=True)  # per-item ✓/✗ verdict (доп. требования)
     created_by: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("users.id"), nullable=True)
     approved_by: Mapped[uuid.UUID | None] = mapped_column(GUID(), ForeignKey("users.id"), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

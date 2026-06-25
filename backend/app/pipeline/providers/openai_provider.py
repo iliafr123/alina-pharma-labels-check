@@ -30,6 +30,35 @@ BENCHMARK_SYSTEM = """Ты сравниваешь результаты авто�
 matched=true только если система выявила все существенные замечания ручной проверки (дополнительные системные замечания допустимы и не влияют на matched).""" + _RU_ONLY
 
 
+# Canonical mandatory marking elements (доп. требования) — the checklist verdict covers ALL of these.
+CHECKLIST_ITEMS = [
+    "Наименование продукции", "Номер нормативного документа (ТУ)", "Номер и дата получения СГР", "Состав",
+    "Количество товара", "Количество содержания активного вещества в суточной дозе",
+    "Форма выпуска / количество в 1 единице", "Показатели пищевой ценности", "Область применения БАД",
+    "Рекомендации и (или) ограничения по использованию", "Продолжительность приёма БАД", "Противопоказания",
+    "Дата изготовления / партия (серия) / годен до", "Срок годности", "Условия хранения",
+    "Юридический адрес производителя. Адрес производства",
+    "Наименование, адрес, контакты организации, принимающей претензии от потребителей",
+    "Штрих-код", "Пиктограммы (петля Мёбиуса)", "Знак обращения на рынке — ЕАС",
+    "Фраза «БАД. Не является лекарственным средством»",
+    "Информация о компонентах-аллергенах / противопоказаниях при заболеваниях", "Размер шрифта — не менее 2 мм",
+]
+
+CHECKLIST_SYSTEM = """Ты эксперт по маркировке БАД (ТР ТС 022/2011, ТР ТС 021/2011, МР 2.3.1.0253-21, требования ЕАЭС).
+Дан распознанный текст макета этикетки и эталонный документ ПЭН (проект этикеточной надписи).
+Проверь НАЛИЧИЕ и КОРРЕКТНОСТЬ КАЖДОГО обязательного элемента из списка (присутствует ли, корректен ли, совпадает ли с ПЭН).
+Для КАЖДОГО элемента верни статус: "ok" (присутствует и корректен), "fail" (отсутствует / ошибка / расхождение с ПЭН или нормами), "na" (неприменимо).
+Обязательно верни ВСЕ пункты из списка в том же порядке, ничего не пропуская.
+Верни JSON: {"checklist": [{"item": "<точное название пункта>", "status": "ok|fail|na", "explanation": "<кратко: что проверено и в чём расхождение>"}]}"""
+
+
+def _checklist_user(ocr_text: str, pen_fields: dict, items: list) -> str:
+    nums = "\n".join(f"{i}. {it}" for i, it in enumerate(items, 1))
+    return (f"Обязательные элементы (проверь каждый):\n{nums}\n\n"
+            f"Эталон ПЭН:\n{json.dumps(pen_fields, ensure_ascii=False)[:6000]}\n\n"
+            f"Распознанный текст макета:\n{ocr_text[:8000]}")
+
+
 def _benchmark_user(reference_text: str, issues: list) -> str:
     return (f"Ручная проверка (эталон):\n{reference_text[:8000]}\n\n"
             f"Замечания системы:\n{json.dumps(issues, ensure_ascii=False)[:8000]}")
@@ -103,6 +132,9 @@ class OpenAILLMProvider(BaseLLMProvider):
 
     async def compare_benchmark(self, reference_text: str, issues: list) -> dict:
         return await self._chat(BENCHMARK_SYSTEM, _benchmark_user(reference_text, issues))
+
+    async def build_checklist(self, ocr_text: str, pen_fields: dict, items: list) -> dict:
+        return await self._chat(CHECKLIST_SYSTEM, _checklist_user(ocr_text, pen_fields, items))
 
     async def compare_with_pen(self, ocr_text: str, pen_fields: dict, category: str) -> dict:
         user = f"Категория: {category}\nПЭН:\n{json.dumps(pen_fields, ensure_ascii=False)}\n\nТекст макета:\n{ocr_text[:8000]}"

@@ -151,13 +151,23 @@ async def _run_pipeline(task_id: str):
 
             db.add(CheckResult(id=uuid.uuid4(), task_id=task.id, stage=CheckStage.report, issues=[], annotated_pdf_s3_key=annotated_pdf_key, created_at=datetime.now(timezone.utc)))
 
+            # Structured checklist (доп. требования): per mandatory element ✓/✗ + explanation.
+            checklist = []
+            try:
+                from app.pipeline.providers.openai_provider import CHECKLIST_ITEMS
+                cl = await llm_provider.build_checklist(ocr_result.full_text, pen_fields, CHECKLIST_ITEMS)
+                checklist = (cl or {}).get("checklist") or []
+            except Exception as ce:
+                logger.error(f"checklist failed: {ce}")
+
             # Optional benchmark: compare against manual-review reference, if provided.
             benchmark = None
             if task.reference_text:
                 benchmark = await run_benchmark(task.reference_text, all_issues, llm_provider)
 
             await db.execute(update(CheckTask).where(CheckTask.id == task.id).values(
-                status=TaskStatus.COMPLETED, completed_at=datetime.now(timezone.utc), benchmark=benchmark
+                status=TaskStatus.COMPLETED, completed_at=datetime.now(timezone.utc),
+                benchmark=benchmark, checklist=checklist
             ))
             await db.commit()
             logger.info(f"Task {task_id} completed with {len(all_issues)} issues")
