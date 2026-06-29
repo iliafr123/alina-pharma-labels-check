@@ -116,7 +116,7 @@ export default function CheckResultPage() {
                       <span className={ok ? 'text-green-600' : na ? 'text-gray-400' : 'text-red-600'}>{ok ? '✓' : na ? '—' : '✗'}</span>
                     </td>
                     <td className="py-1.5 pr-3 font-medium text-gray-700 dark:text-gray-200 w-1/3">{c.item}</td>
-                    <td className="py-1.5 text-gray-500 dark:text-gray-400 text-xs">{c.explanation}</td>
+                    <td className="py-1.5 text-gray-500 dark:text-gray-400 text-xs">{c.status === 'ok' ? '' : c.explanation}</td>
                   </tr>
                 )
               })}
