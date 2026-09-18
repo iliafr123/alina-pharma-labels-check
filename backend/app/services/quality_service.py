@@ -387,8 +387,22 @@ def _verdict(m: dict, th: dict) -> QualityReport:
     # Sharpness/contrast only mean something for raster sources: a vector PDF is
     # rendered by us and is sharp by construction.
     if not m.get("has_text_layer"):
+        contrast = m.get("contrast")
+        blank = contrast is not None and contrast < th["contrast_min"]
+        # Checked first: a blank page has no edges, so the sharpness metric reads as
+        # "blurred" and would otherwise headline the report with the wrong diagnosis.
+        if blank:
+            levels.append("poor")
+            problems.append({
+                "code": "LOW_CONTRAST",
+                "message": f"Почти однотонное изображение (контраст {contrast:.1f}).",
+                "hint": "Похоже на пустую страницу, заливку или очень бледный макет — "
+                        "распознавать нечего.",
+            })
+            advice.append("проверьте, что загружен именно макет этикетки, а не пустая страница")
+
         sharp = m.get("sharpness")
-        if sharp is not None:
+        if sharp is not None and not blank:
             if sharp < th["sharpness_min"]:
                 levels.append("poor")
                 problems.append({
@@ -407,17 +421,6 @@ def _verdict(m: dict, th: dict) -> QualityReport:
                     "message": f"Невысокая резкость ({sharp:.3f}).",
                     "hint": "Мелкий текст может распознаться с ошибками.",
                 })
-
-        contrast = m.get("contrast")
-        if contrast is not None and contrast < th["contrast_min"]:
-            levels.append("poor")
-            problems.append({
-                "code": "LOW_CONTRAST",
-                "message": f"Почти однотонное изображение (контраст {contrast:.1f}).",
-                "hint": "Похоже на пустую страницу, заливку или очень бледный макет — "
-                        "распознавать нечего.",
-            })
-            advice.append("проверьте, что загружен именно макет этикетки, а не пустая страница")
 
     if m.get("total_pages", 1) > th["max_pages"]:
         problems.append({

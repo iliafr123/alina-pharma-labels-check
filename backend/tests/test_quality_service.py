@@ -28,6 +28,20 @@ def _textured(width: int, height: int) -> Image.Image:
     return img
 
 
+def _bold(width: int, height: int) -> Image.Image:
+    """Thick dark bars. Heavy blur softens their edges (low sharpness) while the
+    field stays high-contrast - which is how real label artwork degrades, and what
+    separates "blurred" from "blank". The thin-stroke _textured() fixture washes
+    out to a flat grey under the same blur.
+    """
+    img = Image.new("RGB", (width, height), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    bar = max(8, height // 24)
+    for i, y in enumerate(range(bar, height - bar, bar * 2)):
+        d.rectangle([20, y, width - 20, y + bar], fill=(20, 20, 20) if i % 2 == 0 else (60, 60, 60))
+    return img
+
+
 def jpg_bytes(img: Image.Image, dpi: tuple[int, int] | None = None) -> bytes:
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=95, **({"dpi": dpi} if dpi else {}))
@@ -108,7 +122,7 @@ class TestBadArtwork:
         assert any(p["code"] == "LOW_PIXEL_SIZE" for p in rep.problems)
 
     def test_blurred_image_is_blocked(self):
-        blurred = _textured(2400, 1200).filter(ImageFilter.GaussianBlur(radius=4))
+        blurred = _bold(2400, 1200).filter(ImageFilter.GaussianBlur(radius=4))
         rep = q.assess(jpg_bytes(blurred, dpi=(600, 600)), filename="label.jpg")
         assert rep.ok is False
         assert any(p["code"] == "BLURRY" for p in rep.problems)
@@ -119,6 +133,21 @@ class TestBadArtwork:
         assert rep.ok is False
         assert any(p["code"] == "LOW_CONTRAST" for p in rep.problems)
         assert rep.score <= 10
+
+    def test_blank_page_is_diagnosed_as_blank_not_as_blurred(self):
+        # A blank page has no edges, so the sharpness metric also reads as "blurred".
+        # The headline problem must still be the true one.
+        blank = Image.new("RGB", (2400, 1200), (253, 253, 253))
+        rep = q.assess(jpg_bytes(blank, dpi=(600, 600)), filename="label.jpg")
+        assert rep.problems[0]["code"] == "LOW_CONTRAST"
+        assert not any(p["code"] == "BLURRY" for p in rep.problems)
+
+    def test_a_blurred_but_contrasty_label_is_still_called_blurred(self):
+        blurred = _bold(2400, 1200).filter(ImageFilter.GaussianBlur(radius=4))
+        rep = q.assess(jpg_bytes(blurred, dpi=(600, 600)), filename="label.jpg")
+        assert rep.metrics["contrast"] > q.THRESHOLDS["contrast_min"]   # not blank
+        assert rep.problems[0]["code"] == "BLURRY"
+        assert rep.ok is False
 
     def test_blocking_report_converts_to_an_actionable_error(self):
         rep = q.assess(raster_pdf(100, 50, 300, 150), filename="scan.pdf")
