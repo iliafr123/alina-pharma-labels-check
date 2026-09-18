@@ -7,8 +7,15 @@ from app.services import config_service
 
 
 @pytest.fixture(autouse=True)
-def fixed_rates(monkeypatch):
-    """Pin the CBR rates so conversions are deterministic and no network is touched."""
+def fixed_rates(request, monkeypatch):
+    """Pin the CBR rates so conversions are deterministic and no network is touched.
+
+    Tests marked `real_rates` exercise get_rates() itself and opt out - otherwise
+    they would assert against this stub instead of the code under test.
+    """
+    if "real_rates" in request.keywords:
+        return
+
     async def fake_rates():
         return {"RUB": 1.0, "USD": 90.0, "EUR": 100.0, "ILS": 24.0}
     monkeypatch.setattr(b, "get_rates", fake_rates)
@@ -210,3 +217,78 @@ class TestBalanceApi:
 
     async def test_specialist_cannot_reach_the_admin_balance_screen(self, client, spec_headers):
         assert (await client.get("/api/v1/admin/balances", headers=spec_headers)).status_code == 403
+
+
+@pytest.mark.real_rates
+class TestRateSources:
+    """The shekel is the case that matters here: the user's Gemini balance is in ILS
+    and the Bank of Russia does not quote it."""
+
+    async def test_cbr_rates_are_normalised_by_nominal(self, monkeypatch):
+        _patch_get(monkeypatch, _FakeResponse(200, {"Valute": {
+            "USD": {"Value": 84.2, "Nominal": 1},
+            "KZT": {"Value": 18.9, "Nominal": 100},
+        }}))
+        monkeypatch.setattr(b, "_RATE_CACHE", {"at": 0.0, "rates": {}, "cross": []})
+        rates = await b.get_rates()
+        assert rates["USD"] == 84.2
+        assert round(rates["KZT"], 4) == 0.189
+        assert rates["RUB"] == 1.0
+
+    async def test_missing_currency_is_filled_by_a_usd_cross_rate(self, monkeypatch):
+        calls = {"n": 0}
+
+        class FakeClient:
+            def __init__(self, *a, **kw): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def get(self, url, *a, **kw):
+                calls["n"] += 1
+                if "cbr" in url:      # CBR: no ILS, as in reality
+                    return _FakeResponse(200, {"Valute": {
+                        "USD": {"Value": 84.2, "Nominal": 1},
+                        "EUR": {"Value": 96.7, "Nominal": 1},
+                    }})
+                return _FakeResponse(200, {"rates": {"ILS": 3.3, "EUR": 0.86}})
+
+        monkeypatch.setattr(b.httpx, "AsyncClient", FakeClient)
+        monkeypatch.setattr(b, "_RATE_CACHE", {"at": 0.0, "rates": {}, "cross": []})
+
+        rates = await b.get_rates()
+        assert "ILS" in rates
+        assert round(rates["ILS"], 2) == round(84.2 / 3.3, 2)   # ~25.5 RUB per shekel
+        assert rates["EUR"] == 96.7          # CBR stays authoritative where it quotes
+        assert calls["n"] == 2
+        assert "ILS" in b.rates_source_note()
+
+    async def test_a_shekel_balance_gets_a_rouble_figure(self, monkeypatch, db):
+        async def fake_rates():
+            return {"RUB": 1.0, "USD": 84.2, "ILS": 25.5}
+        monkeypatch.setattr(b, "get_rates", fake_rates)
+
+        await b.set_manual(db, "gemini", 58, "ILS")   # 58 шекелей, как у Ильи
+        entry = (await b.get_balances(db, ["gemini"]))[0]
+        assert entry["amount_rub"] == round(58 * 25.5, 2)
+
+    async def test_cross_rate_failure_leaves_the_currency_unconverted(self, monkeypatch):
+        class FakeClient:
+            def __init__(self, *a, **kw): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def get(self, url, *a, **kw):
+                if "cbr" in url:
+                    return _FakeResponse(200, {"Valute": {"USD": {"Value": 84.2, "Nominal": 1}}})
+                raise httpx.ConnectError("no route")
+
+        monkeypatch.setattr(b.httpx, "AsyncClient", FakeClient)
+        monkeypatch.setattr(b, "_RATE_CACHE", {"at": 0.0, "rates": {}, "cross": []})
+
+        rates = await b.get_rates()
+        assert "ILS" not in rates                 # no rate invented
+        assert b.to_rub(58, "ILS", rates) is None  # and no rouble figure shown
+
+    async def test_cbr_failure_falls_back_to_the_cached_rates(self, monkeypatch):
+        monkeypatch.setattr(b, "_RATE_CACHE", {"at": 0.0, "rates": {"RUB": 1.0, "USD": 80.0}, "cross": []})
+        _patch_get(monkeypatch, httpx.ConnectError("down"))
+        rates = await b.get_rates()
+        assert rates["USD"] == 80.0

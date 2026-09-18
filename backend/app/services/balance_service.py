@@ -37,30 +37,82 @@ NO_BALANCE_API = {
 ALL_PROVIDERS = ["gemini", "openai", "anthropic", "grok", "yandex_vision", "abbyy", "selectel"]
 
 CBR_URL = "https://www.cbr-xml-daily.ru/daily_json.js"
-_RATE_CACHE: dict = {"at": 0.0, "rates": {}}
+# The Bank of Russia quotes 54 currencies and the shekel is not among them, so a
+# balance held in ILS gets its rouble figure through a USD cross-rate instead.
+CROSS_FX_URL = "https://open.er-api.com/v6/latest/USD"
+# Currencies the app offers for a manual balance; anything missing from CBR is
+# filled in from the cross-rate source.
+OFFERED_CURRENCIES = ("USD", "EUR", "ILS")
+_RATE_CACHE: dict = {"at": 0.0, "rates": {}, "cross": []}
 RATE_TTL = 3600
 
 
+async def _cbr_rates() -> dict:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(CBR_URL)
+        resp.raise_for_status()
+        out = {}
+        for code, v in (resp.json().get("Valute") or {}).items():
+            nominal = float(v.get("Nominal") or 1)
+            value = float(v.get("Value") or 0)
+            if nominal > 0 and value > 0:
+                out[code.upper()] = value / nominal
+        return out
+
+
+async def _cross_rates(missing: list[str], usd_rub: float) -> dict:
+    """Roubles per unit for currencies CBR does not quote, via USD."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(CROSS_FX_URL)
+        resp.raise_for_status()
+        per_usd = (resp.json() or {}).get("rates") or {}
+    out = {}
+    for code in missing:
+        rate = per_usd.get(code)
+        if rate:
+            try:
+                out[code] = usd_rub / float(rate)   # RUB per USD / units per USD
+            except (TypeError, ValueError, ZeroDivisionError):
+                continue
+    return out
+
+
 async def get_rates() -> dict:
-    """{'USD': 92.1, 'ILS': 24.8, 'RUB': 1.0} - roubles per one unit. Cached 1 h."""
+    """{'USD': 84.2, 'ILS': 25.4, 'RUB': 1.0} - roubles per one unit. Cached 1 h.
+
+    A failure anywhere here degrades to "no rouble figure" rather than a wrong one:
+    callers render the original currency untouched when a rate is absent.
+    """
     now = time.time()
     if _RATE_CACHE["rates"] and now - _RATE_CACHE["at"] < RATE_TTL:
         return _RATE_CACHE["rates"]
+
     rates = {"RUB": 1.0}
+    cross: list[str] = []
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(CBR_URL)
-            resp.raise_for_status()
-            for code, v in (resp.json().get("Valute") or {}).items():
-                nominal = float(v.get("Nominal") or 1)
-                value = float(v.get("Value") or 0)
-                if nominal > 0 and value > 0:
-                    rates[code.upper()] = value / nominal
-        _RATE_CACHE.update({"at": now, "rates": rates})
+        rates.update(await _cbr_rates())
     except Exception:
-        # Stale rates beat no rates; an empty dict just means "no RUB column".
-        return _RATE_CACHE["rates"] or rates
+        return _RATE_CACHE["rates"] or rates    # stale rates beat no rates
+
+    missing = [c for c in OFFERED_CURRENCIES if c not in rates]
+    if missing and rates.get("USD"):
+        try:
+            filled = await _cross_rates(missing, rates["USD"])
+            rates.update(filled)
+            cross = sorted(filled)
+        except Exception:
+            pass    # the currency simply gets no rouble figure
+
+    _RATE_CACHE.update({"at": now, "rates": rates, "cross": cross})
     return rates
+
+
+def rates_source_note() -> str:
+    cross = _RATE_CACHE.get("cross") or []
+    note = "ЦБ РФ (cbr-xml-daily.ru)"
+    if cross:
+        note += f"; {', '.join(cross)} — кросс-курс через USD (open.er-api.com), ЦБ их не котирует"
+    return note
 
 
 def to_rub(amount: float | None, currency: str, rates: dict) -> float | None:

@@ -269,7 +269,7 @@ async def get_balances(db: AsyncSession = Depends(get_db), _: User = Depends(req
     rates = await balance_service.get_rates()
     return {"balances": entries,
             "rates": {k: v for k, v in rates.items() if k in ("USD", "EUR", "ILS", "RUB")},
-            "rates_source": "ЦБ РФ (cbr-xml-daily.ru)"}
+            "rates_source": balance_service.rates_source_note()}
 
 
 @router.put("/balances/{provider}")
