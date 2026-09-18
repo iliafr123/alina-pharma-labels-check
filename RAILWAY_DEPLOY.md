@@ -1,5 +1,9 @@
 # Деплой на Railway + Netlify
 
+> **Перед каждым деплоем в прод** прогоните регрессионный набор:
+> `bash scripts/predeploy.sh`. Ненулевой код возврата — не деплоить.
+> В CI то же самое выполняется автоматически (`.github/workflows/ci.yml`).
+
 Развёртывание приложения проверки этикеток в облаке (без геоблокировки AI-провайдеров).
 Архитектура: **Railway** = backend (FastAPI) + worker (Celery) + PostgreSQL + Redis. **Netlify** = frontend (React SPA).
 

@@ -8,6 +8,7 @@ from app.core.deps import require_specialist
 from app.models.users import User
 from app.models.products import Product, ProductCategory
 from app.models.files import Mockup, PenDocument
+from app.core.errors import AppError
 from app.services import file_service
 from app.services.storage import storage_service
 from app.schemas.files import (
@@ -84,6 +85,29 @@ async def list_pen_versions(
         select(PenDocument).where(PenDocument.product_id == product_id).order_by(PenDocument.version.desc())
     )
     return result.scalars().all()
+
+
+@router.post("/uploads/quality-check")
+async def quality_check(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_specialist),
+):
+    """Judge a mockup's fitness for OCR *before* anything is uploaded or a check is
+    created, so the check screen can warn (or block) while the user is still looking
+    at the file picker. Nothing is stored."""
+    from app.services import quality_service
+
+    content = await file.read()
+    if len(content) > file_service.MAX_MOCKUP_SIZE:
+        raise AppError("FILE_TOO_LARGE", "Файл макета больше 100 МБ.",
+                       "Сожмите PDF или загрузите отдельные страницы.",
+                       subsystem="file", http_status=413)
+    thresholds = await quality_service.load_thresholds(db)
+    report = quality_service.assess(content, filename=file.filename or "",
+                                    content_type=file.content_type or "",
+                                    thresholds=thresholds)
+    return {"filename": file.filename, "size": len(content), **report.to_dict()}
 
 
 @router.post("/uploads/mockup", response_model=MockupResponse, status_code=201)

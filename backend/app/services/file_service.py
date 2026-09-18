@@ -2,6 +2,7 @@ import io
 import uuid
 import zipfile
 from fastapi import HTTPException, UploadFile
+from app.core.errors import AppError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.models.files import Mockup, PenDocument, FileType
@@ -40,8 +41,14 @@ async def upload_mockup(
     uploaded_by_id: uuid.UUID,
 ) -> Mockup:
     content = await file.read()
+    if not content:
+        raise AppError("FILE_EMPTY", "Файл макета пуст.",
+                       "Выберите файл заново — возможно, он не догрузился.",
+                       subsystem="file", http_status=422)
     if len(content) > MAX_MOCKUP_SIZE:
-        raise HTTPException(400, "Файл макета превышает максимальный размер 100 МБ")
+        raise AppError("FILE_TOO_LARGE", "Файл макета больше 100 МБ.",
+                       "Сожмите PDF или загрузите страницы по отдельности.",
+                       subsystem="file", http_status=413)
     file_type = _detect_file_type(file.filename or "", file.content_type or "")
     version = await _next_version(db, Mockup, product_id)
     storage = await get_storage_service(db)
@@ -67,8 +74,19 @@ async def upload_pen(
     uploaded_by_id: uuid.UUID,
 ) -> PenDocument:
     content = await file.read()
+    if not content:
+        raise AppError("FILE_EMPTY", "Файл ПЭН пуст.",
+                       "Выберите файл заново — возможно, он не догрузился.",
+                       subsystem="file", http_status=422)
     if len(content) > MAX_PEN_SIZE:
-        raise HTTPException(400, "Файл ПЭН превышает максимальный размер 20 МБ")
+        raise AppError("FILE_TOO_LARGE", "Файл ПЭН больше 20 МБ.",
+                       "ПЭН — это текстовый DOCX; такой размер обычно означает, "
+                       "что выбран не тот файл.",
+                       subsystem="file", http_status=413)
+    if not (file.filename or "").lower().endswith((".docx", ".doc")):
+        raise AppError("FILE_UNSUPPORTED", "Эталон ПЭН должен быть файлом DOCX.",
+                       f"Загружен «{file.filename}». Сохраните ПЭН в формате Word (.docx) "
+                       "и повторите.", subsystem="file", http_status=415)
     version = await _next_version(db, PenDocument, product_id)
     storage = await get_storage_service(db)
     s3_key = storage.generate_s3_key(str(product_id), "pen", file.filename or "pen.docx")

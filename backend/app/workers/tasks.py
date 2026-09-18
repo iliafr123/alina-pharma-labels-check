@@ -6,6 +6,15 @@ from app.workers.celery_app import celery_app
 
 logger = get_task_logger(__name__)
 
+# Failures that a retry cannot help with: retrying only wastes provider quota and
+# hides the real message behind three more identical errors.
+_NO_RETRY_CODES = {
+    "MOCKUP_QUALITY_TOO_LOW", "FILE_UNREADABLE", "FILE_EMPTY", "FILE_TOO_LARGE",
+    "FILE_UNSUPPORTED", "PROVIDER_NOT_CONFIGURED", "LLM_AUTH", "LLM_PAYMENT_REQUIRED",
+    "LLM_MODEL_NOT_FOUND", "LLM_QUOTA", "STORAGE_NOT_CONFIGURED", "STORAGE_BAD_CREDENTIALS",
+    "STORAGE_PAYMENT_REQUIRED", "STORAGE_FORBIDDEN", "STORAGE_NO_BUCKET", "STORAGE_FILE_MISSING",
+}
+
 
 @celery_app.task(bind=True, name="run_check_pipeline", max_retries=3, default_retry_delay=10)
 def run_check_pipeline(self, task_id: str):
@@ -44,6 +53,9 @@ async def _run_pipeline(task_id: str):
         ))
         await db.commit()
 
+        # Tracked so a failure can say which stage and which provider broke.
+        stage_name = "init"
+        llm_name = ocr_name = ""
         try:
             # Load files
             mockup_res = await db.execute(select(Mockup).where(Mockup.id == task.mockup_id))
@@ -52,8 +64,27 @@ async def _run_pipeline(task_id: str):
             pen = pen_res.scalar_one()
 
             storage = await get_storage_service(db)
+            stage_name = "storage"
             mockup_bytes = storage.download_file(mockup.s3_key)
             pen_bytes = storage.download_file(pen.s3_key)
+
+            # Quality gate: refuse to spend a model call on a file whose text cannot
+            # be read. The report is stored either way so the UI can explain itself.
+            from app.services import quality_service
+            stage_name = "quality"
+            thresholds = await quality_service.load_thresholds(db)
+            quality_report = quality_service.assess(
+                mockup_bytes, filename=mockup.original_name,
+                content_type="application/pdf" if mockup.file_type.value == "pdf" else "image/jpeg",
+                thresholds=thresholds)
+            await db.execute(update(CheckTask).where(CheckTask.id == task.id).values(
+                quality=quality_report.to_dict()))
+            await db.commit()
+            if not quality_report.ok:
+                raise quality_report.as_error()
+            if quality_report.level == "acceptable":
+                logger.warning(f"Task {task_id}: mockup quality is borderline "
+                               f"({quality_report.metrics.get('effective_px_per_mm')} px/mm)")
 
             # Load product category
             product_res = await db.execute(select(Product).where(Product.id == mockup.product_id))
@@ -67,21 +98,29 @@ async def _run_pipeline(task_id: str):
             pipeline_cfg = {**admin_cfg, **{k: v for k, v in override.items() if v}}
             mode = pipeline_cfg.get("pipeline_mode") or task.mode.value
 
+            stage_name = "config"
             if mode == "unified":
-                llm_name = pipeline_cfg.get("unified_llm") or "anthropic"
-                ocr_provider = await config_service.build_ocr_provider(db, llm_name)
-                llm_provider = await config_service.build_llm_provider(db, llm_name)
+                llm_name = ocr_name = pipeline_cfg.get("unified_llm") or "anthropic"
             else:
                 ocr_name = pipeline_cfg.get("ocr_provider") or "anthropic_vision"
                 llm_name = pipeline_cfg.get("llm_provider") or "anthropic"
-                ocr_provider = await config_service.build_ocr_provider(db, ocr_name)
-                llm_provider = await config_service.build_llm_provider(db, llm_name)
+
+            # Fail with a clear reason instead of letting the provider reject an empty key.
+            from app.core.errors import not_configured
+            ocr_key_name = "anthropic" if ocr_name in ("anthropic", "anthropic_vision") else ocr_name
+            if not await config_service.get_config(db, f"api_key_{ocr_key_name}"):
+                raise not_configured(ocr_name, "ocr")
+            if not await config_service.get_config(db, f"api_key_{llm_name}"):
+                raise not_configured(llm_name, "llm")
+            ocr_provider = await config_service.build_ocr_provider(db, ocr_name)
+            llm_provider = await config_service.build_llm_provider(db, llm_name)
 
             # Optional per-check focus instruction → steers the analysis LLM (not OCR).
             focus = (task.focus_prompt or "").strip()
             if focus:
                 llm_provider._focus = focus
 
+            stage_name = "ocr"
             # Stage 1: OCR
             # Render PDF pages to images and OCR via vision model — design PDFs have
             # text "в кривых"/scrambled text layers, so pdfplumber output is unreliable.
@@ -127,6 +166,19 @@ async def _run_pipeline(task_id: str):
                 image_for_layout = _prep_image(mockup_bytes)
                 ocr_result = await ocr_provider.extract_text(image_for_layout)
 
+            # An empty OCR result means every later stage is analysing nothing - fail
+            # here with a cause rather than returning a confidently empty report.
+            if len((ocr_result.full_text or "").strip()) < 20:
+                from app.core.errors import AppError
+                raise AppError(
+                    "OCR_EMPTY", "Текст на макете не распознан.",
+                    "Модель не увидела текста. Обычные причины: макет состоит из "
+                    "кривых без растра нужного разрешения, файл перевёрнут/пустой, "
+                    "или выбран OCR-провайдер без поддержки vision. "
+                    "Проверьте макет и связку OCR в Конфигурации пайплайна.",
+                    detail=f"ocr_provider={ocr_name}, chars={len(ocr_result.full_text or '')}",
+                    provider=ocr_name, subsystem="ocr", stage="ocr", http_status=422)
+
             ocr_cr = CheckResult(
                 id=uuid.uuid4(), task_id=task.id, stage=CheckStage.ocr,
                 issues=[{"full_text": ocr_result.full_text[:2000]}],
@@ -142,26 +194,31 @@ async def _run_pipeline(task_id: str):
             rule_res = await db.execute(select(ChecklistRule).where(ChecklistRule.is_active == True))
             rules = [{"rule_key": r.rule_key, "description": r.description, "category": r.category.value} for r in rule_res.scalars().all()]
 
+            stage_name = "pen_parse"
             # Parse PEN
             pen_fields = pen.parsed_fields or parse_pen_document(pen_bytes)
 
             all_issues: list[dict] = []
 
+            stage_name = "spelling"
             # Stage 2: Spelling
             spelling_issues = await run_spelling_check(ocr_result.full_text, dictionary_terms, brand_whitelist, llm_provider)
             db.add(CheckResult(id=uuid.uuid4(), task_id=task.id, stage=CheckStage.spelling, issues=spelling_issues, created_at=datetime.now(timezone.utc)))
             all_issues.extend(spelling_issues)
 
+            stage_name = "pen"
             # Stage 3: PEN comparison
             pen_issues = await run_pen_comparison(ocr_result.full_text, pen_fields, llm_provider, category)
             db.add(CheckResult(id=uuid.uuid4(), task_id=task.id, stage=CheckStage.pen, issues=pen_issues, created_at=datetime.now(timezone.utc)))
             all_issues.extend(pen_issues)
 
+            stage_name = "regulatory"
             # Stage 4: Regulatory
             reg_issues = await run_regulatory_check(ocr_result.full_text, image_for_layout, category, rules, llm_provider)
             db.add(CheckResult(id=uuid.uuid4(), task_id=task.id, stage=CheckStage.regulatory, issues=reg_issues, created_at=datetime.now(timezone.utc)))
             all_issues.extend(reg_issues)
 
+            stage_name = "report"
             # Stage 5: Annotated PDF
             annotated_pdf_key = None
             if mockup.file_type.value == "pdf":
@@ -178,7 +235,15 @@ async def _run_pipeline(task_id: str):
                 cl = await llm_provider.build_checklist(ocr_result.full_text, pen_fields, CHECKLIST_ITEMS)
                 checklist = (cl or {}).get("checklist") or []
             except Exception as ce:
-                logger.error(f"checklist failed: {ce}")
+                # Non-fatal: the check still has its issues list. Record it so an empty
+                # checklist on the result screen has a visible explanation.
+                from app.core.errors import classify
+                from app.services.error_service import log_error
+                cerr = classify(ce, provider=llm_name, subsystem="llm", stage="checklist")
+                cerr.title = f"Чек-лист обязательных элементов не построен. {cerr.title}"
+                logger.error(f"checklist failed: [{cerr.code}] {cerr.detail[:200]}")
+                await log_error(db, cerr, source="worker", task_id=task_id,
+                                exc=ce, severity="warning")
 
             # Optional benchmark: compare against manual-review reference, if provided.
             benchmark = None
@@ -193,9 +258,37 @@ async def _run_pipeline(task_id: str):
             logger.info(f"Task {task_id} completed with {len(all_issues)} issues")
 
         except Exception as exc:
-            logger.error(f"Task {task_id} failed: {exc}", exc_info=True)
+            # Turn the raw failure into something the operator can act on, store it on
+            # the task (shown on the result screen) and in the error log (admin screen).
+            from app.core.errors import classify
+            from app.services.error_service import log_error
+
+            provider = ocr_name if stage_name == "ocr" else llm_name
+            endpoint = bucket = ""
+            try:
+                endpoint = (await config_service.get_config(db, "s3_endpoint_url")) or ""
+                bucket = (await config_service.get_config(db, "s3_bucket")) or ""
+            except Exception:
+                pass
+
+            err = classify(exc, provider=provider, stage=stage_name,
+                           subsystem="ocr" if stage_name == "ocr" else "llm",
+                           endpoint=endpoint, bucket=bucket)
+            logger.error(f"Task {task_id} failed at stage={stage_name}: "
+                         f"[{err.code}] {err.title} | {err.detail[:300]}", exc_info=True)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             await db.execute(update(CheckTask).where(CheckTask.id == task.id).values(
-                status=TaskStatus.FAILED, completed_at=datetime.now(timezone.utc), error=str(exc)
+                status=TaskStatus.FAILED, completed_at=datetime.now(timezone.utc),
+                error=err.message, error_code=err.code, error_details=err.to_dict(),
             ))
             await db.commit()
+            await log_error(db, err, source="worker", task_id=task_id, exc=exc)
+
+            # A configuration or quality problem will not fix itself on retry, and a
+            # retry storm just burns provider quota.
+            if err.code in _NO_RETRY_CODES:
+                return
             raise

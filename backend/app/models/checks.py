@@ -40,7 +40,10 @@ class CheckTask(Base, TimestampMixin):
     pipeline_config: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)           # one-line message for lists
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)  # stable AppError code
+    error_details: Mapped[dict | None] = mapped_column(JSONType, nullable=True)  # title/hint/detail/provider
+    quality: Mapped[dict | None] = mapped_column(JSONType, nullable=True)     # mockup quality report
     reference_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # manual-review "Замечание" text
     focus_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)  # per-check LLM focus instruction
     batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # groups a batch run

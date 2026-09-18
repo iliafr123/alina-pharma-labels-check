@@ -16,7 +16,7 @@ from app.services.storage import storage_service, get_storage_service
 from app.services.export_service import (generate_excel_report, generate_word_report, generate_md_report,
                                          generate_batch_md, generate_batch_word)
 from app.services import config_service
-from app.schemas.checks import CheckCreate, CheckTaskResponse, BatchCreate
+from app.schemas.checks import CheckCreate, CheckTaskResponse, BatchCreate, CheckHistoryItem
 import io
 
 router = APIRouter(prefix="/checks", tags=["checks"])
@@ -36,7 +36,32 @@ async def pipeline_options(db: AsyncSession = Depends(get_db), _: User = Depends
         key_name = "anthropic" if p in ("anthropic", "anthropic_vision") else p
         if await config_service.get_config(db, f"api_key_{key_name}"):
             ocr.append(p)
-    return {"debug_mode": debug, "llm_providers": llm, "ocr_providers": ocr}
+    # The check screen needs to explain *why* the Run button is disabled, so it has
+    # to know whether the pipeline is actually configured at all.
+    cfg = await config_service.get_pipeline_config(db)
+    mode = cfg.get("pipeline_mode") or "hybrid"
+    if mode == "unified":
+        active_llm = cfg.get("unified_llm") or ""
+        active_ocr = active_llm
+    else:
+        active_llm = cfg.get("llm_provider") or ""
+        active_ocr = cfg.get("ocr_provider") or ""
+    return {"debug_mode": debug, "llm_providers": llm, "ocr_providers": ocr,
+            "pipeline_mode": mode, "active_llm": active_llm, "active_ocr": active_ocr,
+            "configured": bool(active_llm and active_ocr and llm)}
+
+
+@router.get("/provider-balance")
+async def provider_balance(db: AsyncSession = Depends(get_db), _: User = Depends(require_specialist)):
+    """Balance/quota of the provider this pipeline is set to use, in roubles where a
+    figure exists. Shown on the check screen so a specialist notices an empty account
+    before starting a run rather than after it fails."""
+    from app.services import balance_service
+
+    entry = await balance_service.get_active_balance(db)
+    if not entry:
+        return {"balance": None, "message": "Провайдер LLM не выбран в конфигурации пайплайна."}
+    return {"balance": entry}
 
 
 @router.post("", response_model=CheckTaskResponse, status_code=201)
@@ -97,16 +122,30 @@ async def get_batch(batch_id: str, db: AsyncSession = Depends(get_db), _: User =
     return res.scalars().all()
 
 
+async def _product_name(db: AsyncSession, mockup_id: uuid.UUID) -> str:
+    """Full product name for a mockup; falls back to a short id if the row is gone."""
+    row = (await db.execute(
+        select(Product.name).join(Mockup, Mockup.product_id == Product.id)
+        .where(Mockup.id == mockup_id)
+    )).scalar_one_or_none()
+    return row or f"без названия ({str(mockup_id)[:8]})"
+
+
+async def _task_product_name(db: AsyncSession, task_id: uuid.UUID) -> str:
+    row = (await db.execute(
+        select(Product.name)
+        .join(Mockup, Mockup.product_id == Product.id)
+        .join(CheckTask, CheckTask.mockup_id == Mockup.id)
+        .where(CheckTask.id == task_id)
+    )).scalar_one_or_none()
+    return row or "Продукт"
+
+
 async def _batch_items(db: AsyncSession, batch_id: str) -> list[dict]:
     res = await db.execute(select(CheckTask).where(CheckTask.batch_id == batch_id).order_by(CheckTask.created_at))
     items = []
     for t in res.scalars().all():
-        name = str(t.mockup_id)[:8]
-        mk = (await db.execute(select(Mockup).where(Mockup.id == t.mockup_id))).scalar_one_or_none()
-        if mk is not None:
-            pr = (await db.execute(select(Product).where(Product.id == mk.product_id))).scalar_one_or_none()
-            if pr is not None:
-                name = pr.name
+        name = await _product_name(db, t.mockup_id)
         issues = [i for cr in t.results if cr.issues for i in cr.issues if isinstance(i, dict) and i.get("module")]
         items.append({"name": name, "status": t.status.value, "issues": issues})
     return items
@@ -124,7 +163,7 @@ async def export_batch(batch_id: str, fmt: str, db: AsyncSession = Depends(get_d
                              headers={"Content-Disposition": f"attachment; filename=batch_{batch_id}.{ext}"})
 
 
-@router.get("/history", response_model=list[CheckTaskResponse])
+@router.get("/history", response_model=list[CheckHistoryItem])
 async def check_history(
     product_name: str = "",
     status: str = "",
@@ -133,11 +172,43 @@ async def check_history(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_specialist),
 ):
-    q = select(CheckTask).order_by(CheckTask.created_at.desc())
+    """Journal rows joined through to the product, so each line names the БАД
+    that was checked instead of a mockup UUID."""
+    # Outer joins on purpose: a check whose mockup or product row was removed must
+    # still appear in the journal (with a placeholder name) rather than disappear.
+    q = (
+        select(CheckTask, Product.name, Product.category, Mockup.original_name, Mockup.version)
+        .outerjoin(Mockup, Mockup.id == CheckTask.mockup_id)
+        .outerjoin(Product, Product.id == Mockup.product_id)
+        .order_by(CheckTask.created_at.desc())
+    )
     if status:
         q = q.where(CheckTask.status == status)
-    result = await db.execute(q.offset(skip).limit(limit))
-    return result.scalars().all()
+    if product_name:
+        q = q.where(Product.name.ilike(f"%{product_name}%"))
+
+    rows = (await db.execute(q.offset(skip).limit(limit))).all()
+    items = []
+    for task, name, category, mockup_name, version in rows:
+        issues = [i for cr in task.results if cr.issues
+                  for i in cr.issues if isinstance(i, dict) and i.get("module")]
+        items.append(CheckHistoryItem(
+            id=task.id,
+            product_name=name or f"без названия ({str(task.mockup_id)[:8]})",
+            category=category.value if category is not None else None,
+            mockup_name=mockup_name,
+            mockup_version=version,
+            status=task.status,
+            mode=task.mode,
+            created_at=task.created_at,
+            completed_at=task.completed_at,
+            error=task.error,
+            error_code=task.error_code,
+            error_details=task.error_details,
+            issues_count=len(issues),
+            batch_id=task.batch_id,
+        ))
+    return items
 
 
 @router.get("/{task_id}", response_model=CheckTaskResponse)
@@ -150,7 +221,9 @@ async def get_check(
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(404, "Проверка не найдена")
-    return task
+    resp = CheckTaskResponse.model_validate(task)
+    resp.product_name = await _product_name(db, task.mockup_id)
+    return resp
 
 
 @router.get("/{task_id}/issues")
@@ -219,7 +292,7 @@ async def export_word(
     result = await db.execute(select(CheckResult).where(CheckResult.task_id == task_id))
     results = result.scalars().all()
     issues = [i for cr in results if cr.issues for i in cr.issues if isinstance(i, dict) and i.get("module")]
-    word_bytes = generate_word_report(str(task_id), "Продукт", issues)
+    word_bytes = generate_word_report(str(task_id), await _task_product_name(db, task_id), issues)
     return StreamingResponse(
         io.BytesIO(word_bytes),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -236,7 +309,7 @@ async def export_md(
     result = await db.execute(select(CheckResult).where(CheckResult.task_id == task_id))
     results = result.scalars().all()
     issues = [i for cr in results if cr.issues for i in cr.issues if isinstance(i, dict) and i.get("module")]
-    md_bytes = generate_md_report(str(task_id), "Продукт", issues)
+    md_bytes = generate_md_report(str(task_id), await _task_product_name(db, task_id), issues)
     return StreamingResponse(
         io.BytesIO(md_bytes), media_type="text/markdown",
         headers={"Content-Disposition": f"attachment; filename=report_{task_id}.md"},

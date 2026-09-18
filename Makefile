@@ -1,4 +1,4 @@
-.PHONY: dev init logs test shell-backend
+.PHONY: dev init logs test test-backend test-frontend predeploy shell-backend
 
 dev:
 	docker compose up --build
@@ -9,8 +9,17 @@ init:
 logs:
 	docker compose logs -f
 
-test:
-	docker compose exec backend pytest tests/ -v
+# Full regression gate - must pass before deploying to production.
+predeploy:
+	bash scripts/predeploy.sh
+
+test: predeploy
+
+test-backend:
+	cd backend && python -m pytest
+
+test-frontend:
+	cd frontend && npm test
 
 shell-backend:
 	docker compose exec backend bash

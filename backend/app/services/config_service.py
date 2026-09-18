@@ -80,6 +80,9 @@ async def get_extras(db: AsyncSession) -> dict:
         "yandex_folder_id": (await get_config(db, "yandex_folder_id")) or "",
         "abbyy_password": mask_key(await get_config(db, "abbyy_password")),
         "abbyy_url": (await get_config(db, "abbyy_url")) or "https://cloud.ocrsdk.com",
+        # Read-only token used solely to display the Selectel account balance;
+        # file storage keeps using the S3 access/secret pair.
+        "selectel_api_token": mask_key(await get_config(db, "selectel_api_token")),
     }
 
 

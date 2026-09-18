@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
+import { SUBSYSTEM_LABELS, STAGE_LABELS as ERROR_STAGE_LABELS } from '../lib/errors'
 
 const STAGE_LABELS: Record<string, string> = {
   ocr: 'Извлечение текста (OCR)',
@@ -81,8 +82,12 @@ export default function CheckResultPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-xl font-bold text-gray-800 dark:text-white">Результат проверки</h1>
-          <p className="text-xs text-gray-400 mt-0.5">ID: {id}</p>
+          <h1 className="text-xl font-bold text-gray-800 dark:text-white">
+            {task.product_name || 'Результат проверки'}
+          </h1>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {task.product_name ? 'Результат проверки · ' : ''}ID: {id}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <span className={`text-xs font-semibold px-3 py-1 rounded-full ${task.status === 'COMPLETED' ? 'bg-green-100 text-green-700' : task.status === 'FAILED' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
@@ -187,9 +192,62 @@ export default function CheckResultPage() {
       )}
 
       {task.status === 'FAILED' && (
-        <div className="bg-red-50 dark:bg-red-900/30 rounded-xl p-4 mb-4 border border-red-200">
-          <p className="text-red-600 font-medium text-sm">Ошибка: {task.error}</p>
-          <button onClick={() => navigate('/checks/new')} className="mt-2 text-xs text-red-500 underline">Новая проверка</button>
+        <div className="bg-red-50 dark:bg-red-900/30 rounded-xl p-4 mb-4 border border-red-200 dark:border-red-800">
+          <div className="flex items-start justify-between gap-3">
+            <p className="text-red-700 dark:text-red-300 font-semibold text-sm">
+              {task.error_details?.title || task.error || 'Проверка завершилась ошибкой.'}
+            </p>
+            {task.error_code && (
+              <span className="text-[10px] font-mono text-red-400 border border-red-200 dark:border-red-800 rounded px-1.5 py-0.5 whitespace-nowrap">
+                {task.error_code}
+              </span>
+            )}
+          </div>
+
+          {task.error_details?.hint && (
+            <p className="text-sm text-red-600 dark:text-red-300 mt-2">{task.error_details.hint}</p>
+          )}
+
+          {(task.error_details?.subsystem || task.error_details?.stage || task.error_details?.provider) && (
+            <p className="text-xs text-red-400 mt-2">
+              {[
+                task.error_details?.subsystem && SUBSYSTEM_LABELS[task.error_details.subsystem],
+                task.error_details?.provider,
+                task.error_details?.stage && `этап: ${ERROR_STAGE_LABELS[task.error_details.stage] || task.error_details.stage}`,
+              ].filter(Boolean).join(' · ')}
+            </p>
+          )}
+
+          {task.error_details?.detail && (
+            <details className="mt-3">
+              <summary className="text-xs text-red-400 cursor-pointer select-none">Техническая информация</summary>
+              <pre className="mt-1 text-[11px] text-red-500 whitespace-pre-wrap break-all bg-red-100/60 dark:bg-red-950/40 rounded p-2">
+                {task.error_details.detail}
+              </pre>
+            </details>
+          )}
+
+          <div className="flex gap-4 mt-3">
+            <button onClick={() => navigate('/checks/new')} className="text-xs text-red-500 underline">Новая проверка</button>
+            <button onClick={() => navigate('/history')} className="text-xs text-red-500 underline">В журнал</button>
+          </div>
+        </div>
+      )}
+
+      {/* Quality of the mockup that was analysed - explains a weak or blocked result. */}
+      {task.quality && (task.status === 'FAILED' || task.quality.level !== 'excellent') && (
+        <div className={`rounded-xl p-4 mb-4 border text-sm ${
+          task.quality.ok
+            ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-300 dark:border-yellow-800'
+            : 'bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-800'}`}>
+          <p className="font-semibold text-gray-700 dark:text-gray-200">
+            Качество макета: {task.quality.score}/100
+            {task.quality.metrics?.effective_dpi ? ` · ~${task.quality.metrics.effective_dpi} dpi` : ''}
+          </p>
+          <p className="text-gray-600 dark:text-gray-300 mt-1">{task.quality.summary}</p>
+          {(task.quality.problems || []).map((p: any, i: number) => (
+            <p key={i} className="text-xs text-gray-600 dark:text-gray-400 mt-1">• {p.message}</p>
+          ))}
         </div>
       )}
 

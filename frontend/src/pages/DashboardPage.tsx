@@ -2,7 +2,14 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 
-interface Stats { total_checks: number; completed: number; failed: number; pending: number }
+interface Stats {
+  total_checks: number
+  completed: number
+  failed: number
+  pending: number
+  errors_24h?: number
+  top_error?: { code: string; title: string; count: number } | null
+}
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null)
@@ -37,6 +44,20 @@ export default function DashboardPage() {
           </div>
         ))}
       </div>
+      {stats?.top_error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 p-4 mb-6">
+          <p className="text-sm font-semibold text-red-700 dark:text-red-300">
+            За сутки зафиксировано ошибок: {stats.errors_24h}
+          </p>
+          <p className="text-sm text-red-600 dark:text-red-300 mt-1">
+            Чаще всего: {stats.top_error.title}{' '}
+            <span className="font-mono text-xs text-red-400">[{stats.top_error.code}] × {stats.top_error.count}</span>
+          </p>
+          <button onClick={() => navigate('/admin')} className="text-xs text-red-500 underline mt-2">
+            Открыть журнал ошибок
+          </button>
+        </div>
+      )}
       <p className="text-gray-400 text-sm">Для начала работы выберите «Новая проверка» или откройте «Журнал проверок».</p>
     </div>
   )

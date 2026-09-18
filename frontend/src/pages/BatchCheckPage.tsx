@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import { api } from '../api/client'
+import { errorTitle, errorHint } from '../lib/errors'
 
 type Row = { name: string; mockup: File | null; pen: File | null }
 
@@ -50,7 +51,7 @@ export default function BatchCheckPage() {
       setBatchId(data.batch_id)
       poll(data.batch_id)
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Ошибка при запуске пакета')
+      setError([errorTitle(e, 'Ошибка при запуске пакета'), errorHint(e)].filter(Boolean).join(' '))
     } finally { setLoading(false) }
   }
 
@@ -60,6 +61,22 @@ export default function BatchCheckPage() {
     const a = document.createElement('a'); a.href = url; a.download = `batch_${batchId}.${fmt === 'word' ? 'docx' : 'md'}`; a.click()
     URL.revokeObjectURL(url)
   }
+
+  // Same rule as the button's disabled state, so the two cannot disagree.
+  const batchBlockers: string[] = []
+  const filled = rows.filter((r) => r.name || r.mockup || r.pen)
+  const complete = rows.filter((r) => r.name && r.mockup && r.pen)
+  if (!complete.length) {
+    batchBlockers.push(filled.length
+      ? 'Ни одна строка не заполнена полностью — нужны название, макет и ПЭН.'
+      : 'Заполните хотя бы одну строку: название, макет и ПЭН.')
+  }
+  const partial = filled.length - complete.length
+  if (complete.length && partial > 0) {
+    batchBlockers.push(`Строк заполнено частично: ${partial} — они будут пропущены.`)
+  }
+  if (loading) batchBlockers.push('Идёт загрузка файлов и запуск пакета…')
+  const batchReady = complete.length > 0 && !loading
 
   const done = tasks.length && tasks.every((x) => ['COMPLETED', 'FAILED', 'CANCELLED'].includes(x.status))
   const fileInput = 'text-xs text-gray-600 dark:text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-gray-200 dark:file:bg-gray-600 file:text-xs'
@@ -94,7 +111,16 @@ export default function BatchCheckPage() {
             <textarea value={focus} onChange={(e) => setFocus(e.target.value)} rows={2} className="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:text-white" />
           </div>
           {error && <p className="text-red-500 text-sm">{error}</p>}
-          <button onClick={submit} disabled={loading} className="w-full bg-[#1F4E79] hover:bg-[#2E75B6] text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-40 text-sm">
+          {batchBlockers.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 p-3">
+              {batchBlockers.map((b, i) => (
+                <p key={i} className="text-xs text-amber-800 dark:text-amber-200">• {b}</p>
+              ))}
+            </div>
+          )}
+          <button onClick={submit} disabled={!batchReady}
+            title={batchReady ? 'Запустить пакетную проверку' : batchBlockers.join('\n')}
+            className="w-full bg-[#1F4E79] hover:bg-[#2E75B6] text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed text-sm">
             {loading ? 'Загрузка и запуск...' : '▶ Запустить пакет'}
           </button>
         </div>

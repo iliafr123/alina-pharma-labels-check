@@ -42,16 +42,39 @@ class CheckResultResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CheckHistoryItem(BaseModel):
+    """Journal row. Carries the product's full name - the раньше-shown mockup UUID
+    told the operator nothing about which БАД was checked."""
+    id: uuid.UUID
+    product_name: str
+    category: str | None = None
+    mockup_name: str | None = None
+    mockup_version: int | None = None
+    status: TaskStatus
+    mode: PipelineMode
+    created_at: datetime
+    completed_at: datetime | None = None
+    error: str | None = None
+    error_code: str | None = None
+    error_details: dict | None = None
+    issues_count: int = 0
+    batch_id: str | None = None
+
+
 class CheckTaskResponse(BaseModel):
     id: uuid.UUID
     mockup_id: uuid.UUID
     pen_id: uuid.UUID
+    product_name: str | None = None
     status: TaskStatus
     mode: PipelineMode
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error: str | None = None
+    error_code: str | None = None
+    error_details: dict | None = None
+    quality: dict | None = None
     benchmark: dict | None = None  # verdict vs manual review (matched / missing / extra)
     checklist: list | None = None  # per-item ✓/✗ verdict over mandatory marking elements
     results: list[CheckResultResponse] = []

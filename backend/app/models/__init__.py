@@ -5,6 +5,7 @@ from app.models.checks import CheckTask, CheckResult, TaskStatus, PipelineMode, 
 from app.models.references import DictionaryEntry, BrandWhitelist, ChecklistRule, RuleCategory
 from app.models.audit_log import AuditLog
 from app.models.config import SystemConfig
+from app.models.error_log import ErrorLog
 
 __all__ = [
     "User", "UserRole",
@@ -14,4 +15,5 @@ __all__ = [
     "DictionaryEntry", "BrandWhitelist", "ChecklistRule", "RuleCategory",
     "AuditLog",
     "SystemConfig",
+    "ErrorLog",
 ]
